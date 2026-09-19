@@ -1,0 +1,16 @@
+version: "3.9"
+
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: codelab
+      POSTGRES_PASSWORD: codelab
+      POSTGRES_DB: codelab
+    ports:
+      - "5433:5432"
+    volumes:
+      - codelab_db_data:/var/lib/postgresql/data
+
+volumes:
+  codelab_db_data:

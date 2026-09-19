@@ -1,0 +1,63 @@
+body {
+  font-family: system-ui, sans-serif;
+  background: #0f1115;
+  color: #e6e6e6;
+  margin: 0;
+}
+
+.page {
+  max-width: 840px;
+  margin: 0 auto;
+  padding: 24px;
+}
+
+.code {
+  width: 100%;
+  font-family: 'Fira Code', monospace;
+  background: #1a1d24;
+  color: #e6e6e6;
+  border: 1px solid #333;
+  border-radius: 6px;
+  padding: 12px;
+  box-sizing: border-box;
+}
+
+.actions {
+  margin-top: 12px;
+  display: flex;
+  gap: 8px;
+}
+
+button {
+  background: #3b82f6;
+  color: white;
+  border: none;
+  border-radius: 6px;
+  padding: 8px 16px;
+  cursor: pointer;
+}
+
+.output {
+  background: #1a1d24;
+  border: 1px solid #333;
+  border-radius: 6px;
+  padding: 12px;
+  white-space: pre-wrap;
+}
+
+.error {
+  color: #f87171;
+}
+
+label {
+  display: block;
+  margin-top: 8px;
+}
+
+input {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  padding: 6px;
+  margin-top: 4px;
+}
