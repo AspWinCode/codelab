@@ -103,9 +103,21 @@ class Course(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 
-    versions = relationship("CourseVersion", back_populates="course", order_by="CourseVersion.version_number")
+    versions = relationship(
+        "CourseVersion",
+        back_populates="course",
+        order_by="CourseVersion.version_number",
+        foreign_keys="CourseVersion.course_id",
+    )
     # Публикация создаёт отдельную версию (LMS-006); это — активная опубликованная.
-    active_version_id = Column(Integer, ForeignKey("course_versions.id"), nullable=True)
+    # use_alter=True: без этого Alembic/Postgres не могут создать courses и
+    # course_versions — у них взаимные внешние ключи (course_versions.course_id
+    # наоборот ссылается на courses.id), см. commit-сообщение.
+    active_version_id = Column(
+        Integer,
+        ForeignKey("course_versions.id", use_alter=True, name="fk_courses_active_version"),
+        nullable=True,
+    )
 
 
 class CourseVersion(Base):
@@ -224,6 +236,9 @@ class Submission(Base):
     code = Column(Text, nullable=False)
     language = Column(String(32), nullable=False, default="python3")
     status = Column(SQLEnum(SubmissionStatus), nullable=False, default=SubmissionStatus.CREATED)
+    # JDG-012: приоритет в очереди — выше забирается раньше (например, ручной
+    # перезапуск после починки Checker'а получает приоритет выше обычных посылок).
+    priority = Column(Integer, nullable=False, default=0)
     verdict = Column(SQLEnum(Verdict), nullable=True)
     score = Column(Float, nullable=True)
     stdout = Column(Text, nullable=True)

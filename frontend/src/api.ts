@@ -36,6 +36,18 @@ export interface RunResult {
   timed_out: boolean;
 }
 
+// JDG-001: посылка проходит статусы created → queued → running → done
+// (или cancelled/system_error) — воркер обрабатывает очередь асинхронно.
+export interface Submission {
+  id: number;
+  status: 'created' | 'queued' | 'running' | 'done' | 'cancelled' | 'system_error';
+  verdict: string | null;
+  score: number | null;
+  stdout: string | null;
+  stderr: string | null;
+  created_at: string;
+}
+
 export const api = {
   me: () => request<Me>('/auth/me'),
   courses: () => request<Course[]>('/courses'),
@@ -45,8 +57,9 @@ export const api = {
       body: JSON.stringify({ problem_revision_id, code, stdin }),
     }),
   submit: (problem_revision_id: number, code: string) =>
-    request('/submissions', {
+    request<Submission>('/submissions', {
       method: 'POST',
       body: JSON.stringify({ problem_revision_id, code }),
     }),
+  getSubmission: (id: number) => request<Submission>(`/submissions/${id}`),
 };

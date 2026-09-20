@@ -1,13 +1,12 @@
-"""IDE-003/004, JDG-001: запуск и отправка решения. Проверка выполняется синхронно
-в запросе — TODO вынести в очередь + отдельные Runner-узлы (JDG-001, JDG-012, NFR-005)."""
+"""IDE-003/004, JDG-001: запуск (синхронно, без создания посылки) и отправка
+решения (ставится в очередь — обрабатывает app/worker.py, см. JDG-001/012)."""
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.deps import get_current_user
+from app.deps import get_current_user, require_role
 from app.models import Draft, ProblemRevision, Submission, SubmissionStatus, User
 from app.schemas import RunRequest, RunResult, SubmissionCreate, SubmissionOut
-from app.services.judge import judge_submission
 from app.services.runner import run_python
 
 router = APIRouter()
@@ -35,6 +34,8 @@ def run_code(payload: RunRequest, db: Session = Depends(get_db), user: User = De
 
 @router.post("", response_model=SubmissionOut)
 def submit(payload: SubmissionCreate, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    """JDG-001: создаёт посылку со статусом "В очереди" — саму проверку
+    выполняет app/worker.py. Клиент опрашивает GET /{id} до статуса done."""
     problem = db.query(ProblemRevision).filter(ProblemRevision.id == payload.problem_revision_id).first()
     if not problem:
         raise HTTPException(status_code=404, detail="Задача не найдена")
@@ -57,24 +58,21 @@ def submit(payload: SubmissionCreate, db: Session = Depends(get_db), user: User 
         problem_revision_id=problem.id,
         code=payload.code,
         language=payload.language,
-        status=SubmissionStatus.RUNNING,
+        status=SubmissionStatus.QUEUED,
     )
     db.add(submission)
-    db.flush()
-
-    try:
-        verdict, score, stdout, stderr = judge_submission(problem, payload.code)
-        submission.verdict = verdict
-        submission.score = score
-        submission.stdout = stdout
-        submission.stderr = stderr
-        submission.status = SubmissionStatus.DONE
-    except Exception as e:  # JDG-010: Internal Error не должен списывать попытку/ухудшать балл.
-        submission.status = SubmissionStatus.SYSTEM_ERROR
-        submission.stderr = str(e)
-
     db.commit()
     db.refresh(submission)
+    return submission
+
+
+@router.get("/{submission_id}", response_model=SubmissionOut)
+def get_submission(submission_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    submission = db.query(Submission).filter(Submission.id == submission_id).first()
+    if not submission:
+        raise HTTPException(status_code=404, detail="Посылка не найдена")
+    if submission.user_id != user.id and user.role not in ("teacher", "methodist", "admin"):
+        raise HTTPException(status_code=403, detail="Недостаточно прав")
     return submission
 
 
@@ -86,3 +84,24 @@ def my_submissions(problem_revision_id: int, db: Session = Depends(get_db), user
         .order_by(Submission.created_at.desc())
         .all()
     )
+
+
+@router.post("/rerun")
+def rerun_submissions(
+    submission_ids: list[int],
+    db: Session = Depends(get_db),
+    user: User = Depends(require_role("methodist", "admin")),
+):
+    """TASK-007: массовая перепроверка выбранных посылок (например, после
+    исправления тестов задачи) — переставляет их обратно в очередь с
+    повышенным приоритетом, чтобы не ждать за обычными посылками."""
+    submissions = db.query(Submission).filter(Submission.id.in_(submission_ids)).all()
+    for s in submissions:
+        s.status = SubmissionStatus.QUEUED
+        s.priority = 10
+        s.verdict = None
+        s.score = None
+        s.stdout = None
+        s.stderr = None
+    db.commit()
+    return {"requeued": len(submissions)}
