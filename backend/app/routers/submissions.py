@@ -7,7 +7,7 @@ from app.database import get_db
 from app.deps import get_current_user, require_role
 from app.models import Draft, ProblemRevision, Submission, SubmissionStatus, User
 from app.schemas import ManualGradeIn, RunRequest, RunResult, SubmissionCreate, SubmissionOut
-from app.services.progress_calc import recompute_progress_for_submission
+from app.services.progress_calc import apply_manual_grade
 from app.services.runner import run_python
 
 router = APIRouter()
@@ -94,22 +94,7 @@ def manual_grade(
     db: Session = Depends(get_db),
     user: User = Depends(require_role("teacher", "methodist", "admin")),
 ):
-    """GRD-004: ручная корректировка результата — исходный авто-результат
-    (submission.score/verdict) не трогаем, комментарий обязателен."""
-    if not payload.comment.strip():
-        raise HTTPException(status_code=422, detail="Комментарий обязателен при ручной корректировке")
-
-    submission = db.query(Submission).filter(Submission.id == submission_id).first()
-    if not submission:
-        raise HTTPException(status_code=404, detail="Посылка не найдена")
-
-    submission.manual_score_override = payload.score
-    submission.manual_comment = payload.comment
-    db.commit()
-    db.refresh(submission)
-
-    recompute_progress_for_submission(db, submission)  # GRD-005
-    return submission
+    return apply_manual_grade(db, submission_id, payload.score, payload.comment)
 
 
 @router.post("/rerun")

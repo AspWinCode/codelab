@@ -135,3 +135,24 @@ def _recompute_course_progress(db: Session, enrollment: Enrollment) -> None:
     progress.percent = round(100 * completed / total, 2) if total else 0.0
     progress.points = int(points)
     db.commit()
+
+
+def apply_manual_grade(db: Session, submission_id: int, score: float, comment: str) -> Submission:
+    """GRD-004: ручная корректировка результата — исходный авто-результат
+    (submission.score/verdict) не трогаем, комментарий обязателен."""
+    from fastapi import HTTPException
+
+    if not comment.strip():
+        raise HTTPException(status_code=422, detail="Комментарий обязателен при ручной корректировке")
+
+    submission = db.query(Submission).filter(Submission.id == submission_id).first()
+    if not submission:
+        raise HTTPException(status_code=404, detail="Посылка не найдена")
+
+    submission.manual_score_override = score
+    submission.manual_comment = comment
+    db.commit()
+    db.refresh(submission)
+
+    recompute_progress_for_submission(db, submission)  # GRD-005
+    return submission

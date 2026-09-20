@@ -1,0 +1,311 @@
+"""Общая логика конструктора курса (LMS-001..006, TASK-001..004), вызываемая
+из двух мест:
+- app/routers/courses.py — прямой вход методиста в браузер Codelab по SSO-cookie;
+- app/routers/lms_admin.py — сервер-к-серверу от learning-portal-main (методист
+  и преподаватель работают через свой аккаунт LMS, без входа в Codelab напрямую;
+  это основной путь, см. README).
+"""
+from datetime import datetime, timezone
+
+from fastapi import HTTPException
+from sqlalchemy.orm import Session
+
+from app.models import (
+    AuditEvent,
+    Course,
+    CourseStatus,
+    CourseVersion,
+    LearningItem,
+    LearningItemType,
+    ProblemRevision,
+    Submission,
+    User,
+)
+from app.schemas import (
+    CourseCreate,
+    LearningItemCreate,
+    LearningItemOut,
+    LearningItemTree,
+    LearningItemUpdate,
+    ProblemRevisionCreate,
+    SubmissionReviewOut,
+)
+from app.services.lms_client import notify_course_webhook
+from app.services.progress_calc import is_item_unlocked, resolve_official_score
+
+
+def get_draft_version(db: Session, course_id: int) -> CourseVersion:
+    """Черновик — версия без published_at, последняя по номеру (LMS-006:
+    изменение черновика не должно менять уже опубликованную версию)."""
+    version = (
+        db.query(CourseVersion)
+        .filter(CourseVersion.course_id == course_id, CourseVersion.published_at.is_(None))
+        .order_by(CourseVersion.version_number.desc())
+        .first()
+    )
+    if not version:
+        raise HTTPException(status_code=409, detail="У курса нет открытого черновика для редактирования")
+    return version
+
+
+def build_tree(
+    items: list[LearningItem],
+    unlocked_ids: set[int] | None = None,
+    completed_ids: set[int] | None = None,
+) -> list[LearningItemTree]:
+    # LearningItemOut (без "children") — иначе model_validate(item) читает
+    # реальный ORM-relationship LearningItem.children и рекурсивно тянет его
+    # из БД, задваивая узлы поверх дерева, которое мы строим вручную ниже.
+    nodes = {
+        i.id: LearningItemTree(
+            **LearningItemOut.model_validate(i).model_dump(),
+            children=[],
+            unlocked=True if unlocked_ids is None else i.id in unlocked_ids,
+            completed=False if completed_ids is None else i.id in completed_ids,
+        )
+        for i in items
+    }
+    roots: list[LearningItemTree] = []
+    for item in items:
+        node = nodes[item.id]
+        if item.parent_id and item.parent_id in nodes:
+            nodes[item.parent_id].children.append(node)
+        else:
+            roots.append(node)
+    return roots
+
+
+def build_student_tree(db: Session, user_id: int, items: list[LearningItem]) -> list[LearningItemTree]:
+    items_by_id = {i.id: i for i in items}
+    unlocked_ids = {i.id for i in items if is_item_unlocked(db, user_id, i, items_by_id)}
+    completed_ids = {
+        i.id for i in items
+        if i.type == LearningItemType.TASK and i.problem_revision_id
+        and (resolve_official_score(db, user_id, i.problem_revision_id) or 0) > 0
+    }
+    return build_tree(items, unlocked_ids, completed_ids)
+
+
+def create_course(db: Session, payload: CourseCreate, created_by_id: int | None) -> Course:
+    course = Course(title=payload.title, slug=payload.slug, description=payload.description, created_by_id=created_by_id)
+    db.add(course)
+    db.flush()
+    db.add(CourseVersion(course_id=course.id, version_number=1))
+    db.commit()
+    db.refresh(course)
+    return course
+
+
+def create_task(db: Session, course_id: int, payload: ProblemRevisionCreate, author_id: int | None) -> ProblemRevision:
+    """Создаёт задачу (первую ревизию — task_id сквозной по всей платформе,
+    не по курсу, TASK-006). Привязка к дереву — create_item с type="task"."""
+    course = db.query(Course).filter(Course.id == course_id).first()
+    if not course:
+        raise HTTPException(status_code=404, detail="Курс не найден")
+
+    last = db.query(ProblemRevision).order_by(ProblemRevision.task_id.desc()).first()
+    next_task_id = (last.task_id + 1) if last else 1
+    revision = ProblemRevision(
+        task_id=next_task_id,
+        revision_number=1,
+        author_id=author_id,
+        **payload.model_dump(exclude={"tests"}),
+        tests=[t.model_dump() for t in payload.tests],
+    )
+    db.add(revision)
+    db.commit()
+    db.refresh(revision)
+    return revision
+
+
+def create_item(db: Session, course_id: int, payload: LearningItemCreate) -> LearningItem:
+    version = get_draft_version(db, course_id)
+
+    try:
+        item_type = LearningItemType(payload.type)
+    except ValueError:
+        raise HTTPException(status_code=422, detail=f"Неизвестный тип элемента: {payload.type}")
+
+    if item_type == LearningItemType.TASK and not payload.problem_revision_id:
+        raise HTTPException(status_code=422, detail="Для элемента типа task нужен problem_revision_id")
+
+    if payload.parent_id is not None:
+        parent = (
+            db.query(LearningItem)
+            .filter(LearningItem.id == payload.parent_id, LearningItem.course_version_id == version.id)
+            .first()
+        )
+        if not parent:
+            raise HTTPException(status_code=404, detail="Родительский элемент не найден в черновике этого курса")
+
+    item = LearningItem(
+        course_version_id=version.id,
+        parent_id=payload.parent_id,
+        type=item_type,
+        title=payload.title,
+        description=payload.description,
+        content=payload.content,
+        is_required=payload.is_required,
+        weight=payload.weight,
+        position=payload.position,
+        unlock_rules=payload.unlock_rules,
+        problem_revision_id=payload.problem_revision_id,
+    )
+    db.add(item)
+    db.commit()
+    db.refresh(item)
+    return item
+
+
+def update_item(db: Session, item_id: int, payload: LearningItemUpdate) -> LearningItem:
+    item = db.query(LearningItem).filter(LearningItem.id == item_id).first()
+    if not item:
+        raise HTTPException(status_code=404, detail="Элемент не найден")
+
+    version = db.query(CourseVersion).filter(CourseVersion.id == item.course_version_id).first()
+    if version and version.published_at is not None:
+        raise HTTPException(status_code=409, detail="Нельзя менять уже опубликованную версию курса")
+
+    for field, value in payload.model_dump(exclude_unset=True).items():
+        setattr(item, field, value)
+    db.commit()
+    db.refresh(item)
+    return item
+
+
+def delete_item(db: Session, item_id: int) -> None:
+    """RBAC-004: удаление учебных сущностей — через архивирование, если на них
+    есть назначения/попытки/ссылки из отчётов. У элемента черновика ссылок на
+    назначения ещё быть не может (черновик не назначен), поэтому здесь —
+    обычное удаление; для опубликованных версий редактирование запрещено выше."""
+    item = db.query(LearningItem).filter(LearningItem.id == item_id).first()
+    if not item:
+        raise HTTPException(status_code=404, detail="Элемент не найден")
+
+    version = db.query(CourseVersion).filter(CourseVersion.id == item.course_version_id).first()
+    if version and version.published_at is not None:
+        raise HTTPException(status_code=409, detail="Нельзя менять уже опубликованную версию курса")
+
+    db.query(LearningItem).filter(LearningItem.parent_id == item_id).update({"parent_id": None})
+    db.delete(item)
+    db.commit()
+
+
+async def publish_course(db: Session, course_id: int, actor_id: int | None) -> Course:
+    """LMS-005/006: текущий черновик становится неизменяемой опубликованной
+    версией (published_at, course.active_version_id), а для дальнейшего
+    редактирования сразу открывается новый черновик — клон только что
+    опубликованного дерева, чтобы правки не задевали уже назначенное
+    ученикам. Проверка целостности перед публикацией (LMS-010) — TODO."""
+    course = db.query(Course).filter(Course.id == course_id).first()
+    if not course:
+        raise HTTPException(status_code=404, detail="Курс не найден")
+
+    draft = get_draft_version(db, course_id)
+
+    draft.published_at = datetime.now(timezone.utc)
+    course.active_version_id = draft.id
+    course.status = CourseStatus.PUBLISHED
+    db.flush()
+
+    new_version = CourseVersion(course_id=course.id, version_number=draft.version_number + 1)
+    db.add(new_version)
+    db.flush()
+
+    old_items = (
+        db.query(LearningItem)
+        .filter(LearningItem.course_version_id == draft.id)
+        .order_by(LearningItem.id)
+        .all()
+    )
+    id_map: dict[int, int] = {}
+    for old in old_items:
+        clone = LearningItem(
+            course_version_id=new_version.id,
+            parent_id=None,  # проставим вторым проходом по id_map
+            type=old.type,
+            title=old.title,
+            description=old.description,
+            content=old.content,
+            is_required=old.is_required,
+            weight=old.weight,
+            position=old.position,
+            unlock_rules=old.unlock_rules,
+            problem_revision_id=old.problem_revision_id,
+        )
+        db.add(clone)
+        db.flush()
+        id_map[old.id] = clone.id
+    for old in old_items:
+        if old.parent_id:
+            db.query(LearningItem).filter(LearningItem.id == id_map[old.id]).update(
+                {"parent_id": id_map[old.parent_id]}
+            )
+
+    db.add(AuditEvent(actor_id=actor_id, action="course_publish", object_type="course", object_id=course.id, meta={"version_id": draft.id}))
+    db.commit()
+    db.refresh(course)
+
+    await notify_course_webhook(course, "published")
+    return course
+
+
+def list_course_submissions(db: Session, course_id: int) -> list[SubmissionReviewOut]:
+    """TCH-001/003: посылки по задачам активной (опубликованной) версии
+    курса — преподаватель просматривает исходный код и результаты. Версия
+    методиста-черновика намеренно не включается — там ещё нет реальных
+    зачислений и посылок учеников."""
+    course = db.query(Course).filter(Course.id == course_id).first()
+    if not course:
+        raise HTTPException(status_code=404, detail="Курс не найден")
+    if not course.active_version_id:
+        return []
+
+    task_items = (
+        db.query(LearningItem)
+        .filter(LearningItem.course_version_id == course.active_version_id, LearningItem.type == LearningItemType.TASK)
+        .all()
+    )
+    problem_to_title = {i.problem_revision_id: i.title for i in task_items if i.problem_revision_id}
+    if not problem_to_title:
+        return []
+
+    submissions = (
+        db.query(Submission)
+        .filter(Submission.problem_revision_id.in_(problem_to_title.keys()))
+        .order_by(Submission.created_at.desc())
+        .all()
+    )
+    user_ids = {s.user_id for s in submissions}
+    users_by_id = {u.id: u for u in db.query(User).filter(User.id.in_(user_ids)).all()}
+
+    return [
+        SubmissionReviewOut(
+            submission_id=s.id,
+            student_external_ref=users_by_id[s.user_id].external_ref if s.user_id in users_by_id else "?",
+            student_full_name=users_by_id[s.user_id].full_name if s.user_id in users_by_id else "?",
+            item_title=problem_to_title.get(s.problem_revision_id, f"Задача {s.problem_revision_id}"),
+            code=s.code,
+            status=s.status.value,
+            verdict=s.verdict.value if s.verdict else None,
+            score=s.score,
+            manual_score_override=s.manual_score_override,
+            manual_comment=s.manual_comment,
+            created_at=s.created_at,
+        )
+        for s in submissions
+    ]
+
+
+async def unpublish_course(db: Session, course_id: int, actor_id: int | None) -> Course:
+    course = db.query(Course).filter(Course.id == course_id).first()
+    if not course:
+        raise HTTPException(status_code=404, detail="Курс не найден")
+
+    course.status = CourseStatus.ARCHIVED
+    db.add(AuditEvent(actor_id=actor_id, action="course_unpublish", object_type="course", object_id=course.id))
+    db.commit()
+    db.refresh(course)
+
+    await notify_course_webhook(course, "unpublished")
+    return course

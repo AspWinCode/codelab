@@ -143,6 +143,24 @@ class LastPositionIn(BaseModel):
     item_id: int
 
 
+class SubmissionReviewOut(BaseModel):
+    """TCH-001/003: обзор посылок курса для преподавателя/методиста."""
+
+    submission_id: int
+    student_external_ref: str
+    student_full_name: str
+    item_title: str
+    code: str
+    status: str
+    verdict: Optional[str]
+    score: Optional[float]
+    manual_score_override: Optional[float]
+    manual_comment: Optional[str]
+    created_at: datetime
+
+
+
+
 class UploadOut(BaseModel):
     """EDT-002/008: результат загрузки файла в редактор контента."""
 
