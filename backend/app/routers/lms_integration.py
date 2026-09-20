@@ -64,8 +64,16 @@ def enroll(
     )
     if enrollment:
         enrollment.status = EnrollmentStatus.ACTIVE
+        enrollment.course_version_id = course.active_version_id
     else:
-        db.add(Enrollment(user_id=user.id, course_id=course_id, status=EnrollmentStatus.ACTIVE, source="lms"))
+        # MGR-003: назначение фиксирует точную версию курса на момент выдачи.
+        db.add(Enrollment(
+            user_id=user.id,
+            course_id=course_id,
+            course_version_id=course.active_version_id,
+            status=EnrollmentStatus.ACTIVE,
+            source="lms",
+        ))
     db.commit()
     return {"ok": True}
 

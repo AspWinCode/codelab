@@ -50,7 +50,14 @@ def sso_login(response: Response, token: str = Query(...), course: int | None = 
         if not enrollment:
             course_obj = db.query(Course).filter(Course.id == course).first()
             if course_obj:
-                db.add(Enrollment(user_id=user.id, course_id=course, status=EnrollmentStatus.ACTIVE, source="lms"))
+                # MGR-003: назначение фиксирует точную версию курса на момент выдачи.
+                db.add(Enrollment(
+                    user_id=user.id,
+                    course_id=course,
+                    course_version_id=course_obj.active_version_id,
+                    status=EnrollmentStatus.ACTIVE,
+                    source="lms",
+                ))
         elif enrollment.status == EnrollmentStatus.REVOKED:
             enrollment.status = EnrollmentStatus.ACTIVE
 

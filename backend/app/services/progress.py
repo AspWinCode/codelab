@@ -1,7 +1,5 @@
-from sqlalchemy import func
+from app.models import Course, Enrollment, LearningItem, LearningItemType, Submission, User, Verdict
 from sqlalchemy.orm import Session
-
-from app.models import ProblemRevision, Submission, User, Verdict
 
 
 def compute_progress_for_lms(db: Session, user: User) -> dict:
@@ -23,7 +21,33 @@ def compute_progress_for_lms(db: Session, user: User) -> dict:
 
     points_total = int(sum((s.score or 0) for s in accepted_by_problem.values()))
 
-    courses = []  # TODO: сгруппировать по курсу через LearningItem, когда появится реальная привязка задач к курсу.
+    # Прогресс считается по версии курса, зафиксированной в назначении
+    # (MGR-003) — правки черновика после публикации на неё не влияют (STU-003).
+    courses = []
+    enrollments = db.query(Enrollment).filter(Enrollment.user_id == user.id).all()
+    for enrollment in enrollments:
+        version_id = enrollment.course_version_id
+        if not version_id:
+            continue
+        course = db.query(Course).filter(Course.id == enrollment.course_id).first()
+        if not course:
+            continue
+        task_items = (
+            db.query(LearningItem)
+            .filter(LearningItem.course_version_id == version_id, LearningItem.type == LearningItemType.TASK)
+            .all()
+        )
+        if not task_items:
+            continue
+        problem_ids = {item.problem_revision_id for item in task_items if item.problem_revision_id}
+        solved = problem_ids & accepted_by_problem.keys()
+        courses.append({
+            "course_id": course.id,
+            "course_title": course.title,
+            "tasks_total": len(problem_ids),
+            "tasks_solved": len(solved),
+            "points": int(sum(accepted_by_problem[pid].score or 0 for pid in solved)),
+        })
 
     recent = [
         {

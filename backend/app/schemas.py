@@ -55,6 +55,50 @@ class CourseOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class LearningItemCreate(BaseModel):
+    """LMS-001..004: элемент дерева курса. Для type="task" обязателен
+    problem_revision_id — сама задача создаётся отдельно, POST /courses/{id}/tasks."""
+
+    type: str  # theory | video | file | link | quiz | task | manual | checkpoint
+    title: str
+    description: Optional[str] = None
+    parent_id: Optional[int] = None
+    is_required: bool = True
+    weight: float = 1.0
+    position: int = 0
+    unlock_rules: dict = {}
+    problem_revision_id: Optional[int] = None
+
+
+class LearningItemUpdate(BaseModel):
+    title: Optional[str] = None
+    description: Optional[str] = None
+    parent_id: Optional[int] = None
+    is_required: Optional[bool] = None
+    weight: Optional[float] = None
+    position: Optional[int] = None
+    unlock_rules: Optional[dict] = None
+
+
+class LearningItemOut(BaseModel):
+    id: int
+    type: str
+    title: str
+    description: Optional[str]
+    parent_id: Optional[int]
+    is_required: bool
+    weight: float
+    position: int
+    unlock_rules: dict
+    problem_revision_id: Optional[int]
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class LearningItemTree(LearningItemOut):
+    children: List["LearningItemTree"] = []
+
+
 class SubmissionCreate(BaseModel):
     problem_revision_id: int
     code: str

@@ -16,7 +16,7 @@ from sqlalchemy import (
     UniqueConstraint,
     func,
 )
-from sqlalchemy.orm import relationship
+from sqlalchemy.orm import backref, relationship
 
 from app.database import Base
 
@@ -154,7 +154,10 @@ class LearningItem(Base):
     problem_revision_id = Column(Integer, ForeignKey("problem_revisions.id"), nullable=True)
 
     course_version = relationship("CourseVersion", back_populates="items")
-    children = relationship("LearningItem", backref="parent", remote_side=[id])
+    # remote_side идёт на backref ("parent"), не на "children" — иначе
+    # relationship переворачивается: "children" становится скаляром (None),
+    # а "parent" — коллекцией.
+    children = relationship("LearningItem", backref=backref("parent", remote_side="LearningItem.id"))
     problem_revision = relationship("ProblemRevision")
 
 
