@@ -11,6 +11,13 @@ class Settings(BaseSettings):
     frontend_base_url: str = "http://localhost:5174"
     cors_origins: str = "http://localhost:5174"
 
+    # JDG-002/003, SEC-004: "docker" — единственный режим, годный для чужого кода.
+    # "subprocess" — только для разработки на машине без Docker, без изоляции.
+    runner_backend: str = "docker"
+    runner_docker_image: str = "codelab-runner:python3.12"
+    runner_cpus: float = 1.0
+    runner_pids_limit: int = 64
+
     @property
     def cors_origin_list(self) -> list[str]:
         return [o.strip() for o in self.cors_origins.split(",") if o.strip()]

@@ -23,7 +23,7 @@ def judge_submission(problem: ProblemRevision, code: str) -> tuple[Verdict, floa
     passed = 0
     last_stdout, last_stderr = "", ""
     for test in tests:
-        result: RunResult = run_python(code, test.get("input", ""), problem.time_limit_ms)
+        result: RunResult = run_python(code, test.get("input", ""), problem.time_limit_ms, problem.memory_limit_mb)
         last_stdout, last_stderr = result.stdout, result.stderr
         if result.timed_out:
             return Verdict.TIME_LIMIT_EXCEEDED, round(100 * passed / len(tests), 2), last_stdout, last_stderr

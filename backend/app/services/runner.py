@@ -1,28 +1,17 @@
-"""ВНИМАНИЕ: это НЕ изолированная среда исполнения (JDG-002, JDG-003, SEC-004).
-Код ученика выполняется локальным subprocess с таймаутом — годится только для
-разработки на своей машине. Перед продакшеном нужно заменить на настоящий
-Runner без доступа к БД, секретам и сети (Docker/gVisor/Firecracker), см. README.
-"""
-import subprocess
-import sys
-import tempfile
-from pathlib import Path
-
+"""Точка входа для исполнения кода ученика — выбирает Runner по настройке
+RUNNER_BACKEND. По умолчанию "docker" (изолированный, единственный вариант
+для чужого кода — JDG-002/003, SEC-004); "subprocess" — только для локальной
+разработки на машине без Docker, см. runner_subprocess.py."""
+from app.config import settings
 from app.schemas import RunResult
 
 
-def run_python(code: str, stdin: str, time_limit_ms: int = 2000) -> RunResult:
-    with tempfile.TemporaryDirectory() as tmp:
-        script = Path(tmp) / "solution.py"
-        script.write_text(code, encoding="utf-8")
-        try:
-            proc = subprocess.run(
-                [sys.executable, str(script)],
-                input=stdin,
-                capture_output=True,
-                text=True,
-                timeout=time_limit_ms / 1000,
-            )
-            return RunResult(stdout=proc.stdout[:20_000], stderr=proc.stderr[:20_000], timed_out=False)
-        except subprocess.TimeoutExpired as e:
-            return RunResult(stdout=(e.stdout or "")[:20_000], stderr=(e.stderr or "")[:20_000], timed_out=True)
+def run_python(code: str, stdin: str, time_limit_ms: int = 2000, memory_limit_mb: int = 256) -> RunResult:
+    if settings.runner_backend == "subprocess":
+        from app.services.runner_subprocess import run_python as _run_subprocess
+
+        return _run_subprocess(code, stdin, time_limit_ms)
+
+    from app.services.runner_docker import run_python_sandboxed
+
+    return run_python_sandboxed(code, stdin, time_limit_ms, memory_limit_mb)

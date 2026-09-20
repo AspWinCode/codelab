@@ -30,7 +30,7 @@ def run_code(payload: RunRequest, db: Session = Depends(get_db), user: User = De
         db.add(Draft(user_id=user.id, problem_revision_id=problem.id, code=payload.code))
     db.commit()
 
-    return run_python(payload.code, payload.stdin, problem.time_limit_ms)
+    return run_python(payload.code, payload.stdin, problem.time_limit_ms, problem.memory_limit_mb)
 
 
 @router.post("", response_model=SubmissionOut)
@@ -42,7 +42,11 @@ def submit(payload: SubmissionCreate, db: Session = Depends(get_db), user: User 
     if problem.max_attempts is not None:
         attempts = (
             db.query(Submission)
-            .filter(Submission.user_id == user.id, Submission.problem_revision_id == problem.id)
+            .filter(
+                Submission.user_id == user.id,
+                Submission.problem_revision_id == problem.id,
+                Submission.status != SubmissionStatus.SYSTEM_ERROR,
+            )
             .count()
         )
         if attempts >= problem.max_attempts:
