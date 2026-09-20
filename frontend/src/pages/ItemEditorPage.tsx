@@ -24,6 +24,7 @@ export default function ItemEditorPage() {
   const [mode, setMode] = useState<'edit' | 'preview'>('edit');
   const [status, setStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
   const [uploadError, setUploadError] = useState('');
+  const [loadError, setLoadError] = useState('');
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const dirtyRef = useRef(false);
 
@@ -32,7 +33,7 @@ export default function ItemEditorPage() {
       setItem(i);
       setTitle(i.title);
       setContent(i.content || '');
-    });
+    }).catch((e: any) => setLoadError(e.message || 'Не удалось загрузить элемент'));
   }, [itemId]);
 
   const save = useCallback(async () => {
@@ -110,6 +111,7 @@ export default function ItemEditorPage() {
     e.target.value = '';
   };
 
+  if (loadError) return <div className="page error">{loadError}</div>;
   if (!item) return <div className="page">Загрузка…</div>;
 
   return (

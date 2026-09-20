@@ -45,6 +45,8 @@ export interface Submission {
   score: number | null;
   stdout: string | null;
   stderr: string | null;
+  manual_score_override: number | null;
+  manual_comment: string | null;
   created_at: string;
 }
 
@@ -62,18 +64,60 @@ export interface LearningItem {
   problem_revision_id: number | null;
 }
 
+export interface LearningItemTree extends LearningItem {
+  children: LearningItemTree[];
+  unlocked: boolean;
+  completed: boolean;
+}
+
 export interface UploadResult {
   url: string;
   content_type: string;
   size: number;
 }
 
+// STU-001: главная страница ученика.
+export interface NextItem {
+  id: number;
+  title: string;
+}
+
+export interface DashboardCourse {
+  course_id: number;
+  title: string;
+  percent: number;
+  completed_items: number;
+  total_items: number;
+  deadline: string | null;
+  next_item: NextItem | null;
+  last_item_id: number | null;
+}
+
+export interface RecentResult {
+  submission_id: number;
+  task_title: string;
+  verdict: string | null;
+  score: number | null;
+  created_at: string;
+}
+
+export interface Dashboard {
+  courses: DashboardCourse[];
+  recent_results: RecentResult[];
+}
+
 export const api = {
   me: () => request<Me>('/auth/me'),
   courses: () => request<Course[]>('/courses'),
+  dashboard: () => request<Dashboard>('/me/dashboard'),
+  getTree: (courseId: number) => request<LearningItemTree[]>(`/courses/${courseId}/tree`),
+  setLastPosition: (courseId: number, itemId: number) =>
+    request(`/courses/${courseId}/last-position`, { method: 'PUT', body: JSON.stringify({ item_id: itemId }) }),
   getItem: (id: number) => request<LearningItem>(`/courses/items/${id}`),
   updateItem: (id: number, patch: Partial<Pick<LearningItem, 'title' | 'content' | 'description'>>) =>
     request<LearningItem>(`/courses/items/${id}`, { method: 'PUT', body: JSON.stringify(patch) }),
+  mySubmissions: (problemRevisionId: number) =>
+    request<Submission[]>(`/submissions?problem_revision_id=${problemRevisionId}`),
   upload: async (file: File): Promise<UploadResult> => {
     const form = new FormData();
     form.append('file', file);

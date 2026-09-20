@@ -207,6 +207,8 @@ class Enrollment(Base):
     source = Column(String(32), nullable=False, default="lms")  # lms | manual
     starts_at = Column(DateTime(timezone=True), nullable=True)
     ends_at = Column(DateTime(timezone=True), nullable=True)
+    # STU-005: последняя открытая позиция в материале — "продолжить обучение".
+    last_item_id = Column(Integer, ForeignKey("learning_items.id"), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     user = relationship("User", back_populates="enrollments")

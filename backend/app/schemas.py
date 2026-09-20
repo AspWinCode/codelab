@@ -102,8 +102,45 @@ class LearningItemTree(LearningItemOut):
     children: List["LearningItemTree"] = []
     # STU-002: заблокированные элементы видны, но недоступны для прохождения
     # (LMS-004, unlock_rules). Смысл только для взгляда ученика — методисту
-    # черновик всегда возвращается с unlocked=True.
+    # черновик всегда возвращается с unlocked=True/completed=False.
     unlocked: bool = True
+    completed: bool = False
+
+
+class NextItemOut(BaseModel):
+    id: int
+    title: str
+
+
+class DashboardCourseOut(BaseModel):
+    """STU-001: главная страница ученика — активные курсы, % прохождения,
+    ближайшие дедлайны, следующий рекомендуемый шаг."""
+
+    course_id: int
+    title: str
+    percent: float
+    completed_items: int
+    total_items: int
+    deadline: Optional[datetime] = None
+    next_item: Optional[NextItemOut] = None
+    last_item_id: Optional[int] = None
+
+
+class RecentResultOut(BaseModel):
+    submission_id: int
+    task_title: str
+    verdict: Optional[str]
+    score: Optional[float]
+    created_at: datetime
+
+
+class DashboardOut(BaseModel):
+    courses: List[DashboardCourseOut]
+    recent_results: List[RecentResultOut]
+
+
+class LastPositionIn(BaseModel):
+    item_id: int
 
 
 class UploadOut(BaseModel):

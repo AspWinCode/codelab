@@ -13,6 +13,7 @@ from app.models import (
     Course,
     CourseStatus,
     CourseVersion,
+    Enrollment,
     LearningItem,
     LearningItemType,
     ProblemRevision,
@@ -21,6 +22,7 @@ from app.models import (
 from app.schemas import (
     CourseCreate,
     CourseOut,
+    LastPositionIn,
     LearningItemCreate,
     LearningItemOut,
     LearningItemTree,
@@ -29,7 +31,7 @@ from app.schemas import (
     ProblemRevisionOut,
 )
 from app.services.lms_client import notify_course_webhook
-from app.services.progress_calc import is_item_unlocked
+from app.services.progress_calc import is_item_unlocked, resolve_official_score
 
 router = APIRouter()
 
@@ -48,7 +50,11 @@ def _get_draft_version(db: Session, course_id: int) -> CourseVersion:
     return version
 
 
-def _build_tree(items: list[LearningItem], unlocked_ids: set[int] | None = None) -> list[LearningItemTree]:
+def _build_tree(
+    items: list[LearningItem],
+    unlocked_ids: set[int] | None = None,
+    completed_ids: set[int] | None = None,
+) -> list[LearningItemTree]:
     # LearningItemOut (без "children") — иначе model_validate(item) читает
     # реальный ORM-relationship LearningItem.children и рекурсивно тянет его
     # из БД, задваивая узлы поверх дерева, которое мы строим вручную ниже.
@@ -57,6 +63,7 @@ def _build_tree(items: list[LearningItem], unlocked_ids: set[int] | None = None)
             **LearningItemOut.model_validate(i).model_dump(),
             children=[],
             unlocked=True if unlocked_ids is None else i.id in unlocked_ids,
+            completed=False if completed_ids is None else i.id in completed_ids,
         )
         for i in items
     }
@@ -237,7 +244,38 @@ def get_tree(course_id: int, db: Session = Depends(get_db), user: User = Depends
 
     items_by_id = {i.id: i for i in items}
     unlocked_ids = {i.id for i in items if is_item_unlocked(db, user.id, i, items_by_id)}
-    return _build_tree(items, unlocked_ids)
+    completed_ids = {
+        i.id for i in items
+        if i.type == LearningItemType.TASK and i.problem_revision_id
+        and (resolve_official_score(db, user.id, i.problem_revision_id) or 0) > 0
+    }
+    return _build_tree(items, unlocked_ids, completed_ids)
+
+
+@router.put("/{course_id}/last-position")
+def set_last_position(
+    course_id: int,
+    payload: LastPositionIn,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """STU-005: сохраняет последнюю открытую позицию в материале курса —
+    "продолжить обучение с неё" на главной странице ученика."""
+    enrollment = (
+        db.query(Enrollment)
+        .filter(Enrollment.user_id == user.id, Enrollment.course_id == course_id)
+        .first()
+    )
+    if not enrollment:
+        raise HTTPException(status_code=404, detail="Вы не записаны на этот курс")
+
+    item = db.query(LearningItem).filter(LearningItem.id == payload.item_id).first()
+    if not item or item.course_version_id != enrollment.course_version_id:
+        raise HTTPException(status_code=422, detail="Элемент не относится к назначенной версии курса")
+
+    enrollment.last_item_id = payload.item_id
+    db.commit()
+    return {"ok": True}
 
 
 @router.post("/{course_id}/publish", response_model=CourseOut)
