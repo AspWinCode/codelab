@@ -62,6 +62,7 @@ class LearningItemCreate(BaseModel):
     type: str  # theory | video | file | link | quiz | task | manual | checkpoint
     title: str
     description: Optional[str] = None
+    content: Optional[str] = None
     parent_id: Optional[int] = None
     is_required: bool = True
     weight: float = 1.0
@@ -73,6 +74,7 @@ class LearningItemCreate(BaseModel):
 class LearningItemUpdate(BaseModel):
     title: Optional[str] = None
     description: Optional[str] = None
+    content: Optional[str] = None
     parent_id: Optional[int] = None
     is_required: Optional[bool] = None
     weight: Optional[float] = None
@@ -83,6 +85,7 @@ class LearningItemUpdate(BaseModel):
 class LearningItemOut(BaseModel):
     id: int
     type: str
+    content: Optional[str] = None
     title: str
     description: Optional[str]
     parent_id: Optional[int]
@@ -97,6 +100,14 @@ class LearningItemOut(BaseModel):
 
 class LearningItemTree(LearningItemOut):
     children: List["LearningItemTree"] = []
+
+
+class UploadOut(BaseModel):
+    """EDT-002/008: результат загрузки файла в редактор контента."""
+
+    url: str
+    content_type: str
+    size: int
 
 
 class SubmissionCreate(BaseModel):

@@ -154,6 +154,17 @@ def create_item(
     return item
 
 
+@router.get("/items/{item_id}", response_model=LearningItemOut)
+def get_item(item_id: int, db: Session = Depends(get_db), user: User = Depends(require_role("methodist", "admin"))):
+    """Для редактора контента (EDT-006/007) — загрузить текущий текст элемента.
+    Только черновик: у опубликованных версий смотреть содержимое можно через
+    /tree, здесь — именно точка входа для правки."""
+    item = db.query(LearningItem).filter(LearningItem.id == item_id).first()
+    if not item:
+        raise HTTPException(status_code=404, detail="Элемент не найден")
+    return item
+
+
 @router.put("/items/{item_id}", response_model=LearningItemOut)
 def update_item(
     item_id: int,

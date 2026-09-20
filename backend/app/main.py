@@ -1,8 +1,11 @@
+import os
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 
 from app.config import settings
-from app.routers import auth, courses, lms_integration, submissions
+from app.routers import auth, courses, lms_integration, submissions, uploads
 
 app = FastAPI(title="Codelab API", version="0.1.0")
 
@@ -20,6 +23,13 @@ app.include_router(submissions.router, prefix="/api/submissions", tags=["submiss
 # Без общего префикса /api — контракт lms_integration фиксирован путями
 # /api/internal/... и /api/admin/... как в learning-portal-main.
 app.include_router(lms_integration.router, prefix="/api", tags=["lms-integration"])
+app.include_router(uploads.router, prefix="/api/uploads", tags=["uploads"])
+
+# EDT-002: прямая раздача загруженных файлов редактора. В README отмечено,
+# что для прода это должно стать объектным хранилищем за CDN/подписанными
+# URL, а не диском самого API-процесса.
+os.makedirs(settings.uploads_dir, exist_ok=True)
+app.mount("/uploads", StaticFiles(directory=settings.uploads_dir), name="uploads")
 
 
 @app.get("/health")

@@ -146,6 +146,9 @@ class LearningItem(Base):
     type = Column(SQLEnum(LearningItemType), nullable=False)
     title = Column(String(255), nullable=False)
     description = Column(Text, nullable=True)
+    # EDT-001: содержимое теории/материала — Markdown с изображениями/видео/кодом/формулами,
+    # рендерится на фронтенде (раздел 5.3). Автосохранение — EDT-006, PUT .../items/{id}.
+    content = Column(Text, nullable=True)
     is_required = Column(Boolean, nullable=False, default=True)
     weight = Column(Float, nullable=False, default=1.0)
     position = Column(Integer, nullable=False, default=0)
