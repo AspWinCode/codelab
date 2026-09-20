@@ -6,7 +6,8 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.deps import get_current_user, require_role
 from app.models import Draft, ProblemRevision, Submission, SubmissionStatus, User
-from app.schemas import RunRequest, RunResult, SubmissionCreate, SubmissionOut
+from app.schemas import ManualGradeIn, RunRequest, RunResult, SubmissionCreate, SubmissionOut
+from app.services.progress_calc import recompute_progress_for_submission
 from app.services.runner import run_python
 
 router = APIRouter()
@@ -84,6 +85,31 @@ def my_submissions(problem_revision_id: int, db: Session = Depends(get_db), user
         .order_by(Submission.created_at.desc())
         .all()
     )
+
+
+@router.put("/{submission_id}/grade", response_model=SubmissionOut)
+def manual_grade(
+    submission_id: int,
+    payload: ManualGradeIn,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_role("teacher", "methodist", "admin")),
+):
+    """GRD-004: ручная корректировка результата — исходный авто-результат
+    (submission.score/verdict) не трогаем, комментарий обязателен."""
+    if not payload.comment.strip():
+        raise HTTPException(status_code=422, detail="Комментарий обязателен при ручной корректировке")
+
+    submission = db.query(Submission).filter(Submission.id == submission_id).first()
+    if not submission:
+        raise HTTPException(status_code=404, detail="Посылка не найдена")
+
+    submission.manual_score_override = payload.score
+    submission.manual_comment = payload.comment
+    db.commit()
+    db.refresh(submission)
+
+    recompute_progress_for_submission(db, submission)  # GRD-005
+    return submission
 
 
 @router.post("/rerun")

@@ -100,6 +100,10 @@ class LearningItemOut(BaseModel):
 
 class LearningItemTree(LearningItemOut):
     children: List["LearningItemTree"] = []
+    # STU-002: заблокированные элементы видны, но недоступны для прохождения
+    # (LMS-004, unlock_rules). Смысл только для взгляда ученика — методисту
+    # черновик всегда возвращается с unlocked=True.
+    unlocked: bool = True
 
 
 class UploadOut(BaseModel):
@@ -123,9 +127,19 @@ class SubmissionOut(BaseModel):
     score: Optional[float]
     stdout: Optional[str]
     stderr: Optional[str]
+    # GRD-004: ручная корректировка хранится отдельно от исходного авто-результата выше.
+    manual_score_override: Optional[float] = None
+    manual_comment: Optional[str] = None
     created_at: datetime
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class ManualGradeIn(BaseModel):
+    """GRD-004: ручная корректировка результата — комментарий обязателен."""
+
+    score: float
+    comment: str
 
 
 class RunRequest(BaseModel):

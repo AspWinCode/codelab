@@ -19,6 +19,7 @@ from sqlalchemy.orm import Session
 from app.database import SessionLocal
 from app.models import ProblemRevision, Submission, SubmissionStatus
 from app.services.judge import judge_submission
+from app.services.progress_calc import recompute_progress_for_submission
 
 logger = logging.getLogger(__name__)
 
@@ -62,6 +63,7 @@ def _process_submission(db: Session, submission: Submission) -> None:
             submission.stderr = stderr
             submission.status = SubmissionStatus.DONE
             db.commit()
+            recompute_progress_for_submission(db, submission)  # GRD-005
             return
         except Exception as e:  # техническая ошибка Runner'а/Judge, не вердикт по решению
             last_error = e

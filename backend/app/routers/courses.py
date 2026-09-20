@@ -29,6 +29,7 @@ from app.schemas import (
     ProblemRevisionOut,
 )
 from app.services.lms_client import notify_course_webhook
+from app.services.progress_calc import is_item_unlocked
 
 router = APIRouter()
 
@@ -47,11 +48,18 @@ def _get_draft_version(db: Session, course_id: int) -> CourseVersion:
     return version
 
 
-def _build_tree(items: list[LearningItem]) -> list[LearningItemTree]:
+def _build_tree(items: list[LearningItem], unlocked_ids: set[int] | None = None) -> list[LearningItemTree]:
     # LearningItemOut (без "children") — иначе model_validate(item) читает
     # реальный ORM-relationship LearningItem.children и рекурсивно тянет его
     # из БД, задваивая узлы поверх дерева, которое мы строим вручную ниже.
-    nodes = {i.id: LearningItemTree(**LearningItemOut.model_validate(i).model_dump(), children=[]) for i in items}
+    nodes = {
+        i.id: LearningItemTree(
+            **LearningItemOut.model_validate(i).model_dump(),
+            children=[],
+            unlocked=True if unlocked_ids is None else i.id in unlocked_ids,
+        )
+        for i in items
+    }
     roots: list[LearningItemTree] = []
     for item in items:
         node = nodes[item.id]
@@ -223,7 +231,13 @@ def get_tree(course_id: int, db: Session = Depends(get_db), user: User = Depends
         version_id = _get_draft_version(db, course_id).id
 
     items = db.query(LearningItem).filter(LearningItem.course_version_id == version_id).order_by(LearningItem.position).all()
-    return _build_tree(items)
+
+    if user.role != "student":
+        return _build_tree(items)
+
+    items_by_id = {i.id: i for i in items}
+    unlocked_ids = {i.id for i in items if is_item_unlocked(db, user.id, i, items_by_id)}
+    return _build_tree(items, unlocked_ids)
 
 
 @router.post("/{course_id}/publish", response_model=CourseOut)
