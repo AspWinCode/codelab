@@ -65,7 +65,11 @@ def _build_docker_args(
     memory_limit_mb: int,
     extra_mounts: list[tuple[str, str]] | None = None,
 ) -> list[str]:
-    tmpfs_opts = "rw,size=64m,nosuid" + ("" if environment.tmp_exec else ",noexec")
+    # У Docker --tmpfs НЕТ "разрешить по умолчанию": сам факт отсутствия
+    # "noexec" не включает исполнение — нужно явно указать "exec" (проверено
+    # руками на проде 2026-09-21: без явного "exec" cpp17 падал "Permission
+    # denied" на уже скомпилированном и +x файле).
+    tmpfs_opts = "rw,size=64m,nosuid," + ("exec" if environment.tmp_exec else "noexec")
     args = [
         "docker", "run",
         "--rm",
