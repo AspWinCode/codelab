@@ -3,10 +3,16 @@ name: codelab
 # Прод-развёртывание Codelab (аналог kodex/pixelforge на этом хосте) — наружу
 # отдаёт nginx хоста на codelab.tirskix.space, сюда смотрит только 127.0.0.1.
 #
-# worker подключает docker.sock хоста — сам Judge исполняет решения учеников
-# в ОТДЕЛЬНЫХ одноразовых контейнерах через `docker run` (app/services/
-# runner_docker.py, JDG-002/003, SEC-004), не в себе; воркеру для этого нужен
-# доступ к докер-демону хоста, а не к себе как к контейнеру.
+# И backend, и worker подключают docker.sock хоста — сам Judge исполняет
+# решения учеников в ОТДЕЛЬНЫХ одноразовых контейнерах через `docker run`
+# (app/services/runner_docker.py, JDG-002/003, SEC-004), не в себе. backend
+# нужен docker.sock для синхронного POST /submissions/run (IDE-003 — прогон
+# без создания посылки, выполняется прямо в API-процессе, не через очередь);
+# worker — для очереди (POST /submissions → app.worker). Раз backend
+# по определению исполняет недоверенный код в отдельном контейнере вручную
+# (не читает и не пишет docker.sock кроме как через `docker run` конкретной
+# песочницы), это не расширяет то, что уже допускает воркер — тот же риск,
+# что и раньше, просто из двух процессов вместо одного.
 
 services:
   db:
@@ -35,9 +41,10 @@ services:
       SECRET_KEY: ${SECRET_KEY}
       SSO_KODEX_SHARED_SECRET: ${SSO_KODEX_SHARED_SECRET}
       FRONTEND_BASE_URL: ${FRONTEND_BASE_URL}
-      RUNNER_BACKEND: subprocess  # backend только отдаёт API — судит только worker
+      RUNNER_BACKEND: docker
     volumes:
       - codelab_uploads:/app/uploads
+      - /var/run/docker.sock:/var/run/docker.sock
     depends_on:
       db:
         condition: service_healthy
