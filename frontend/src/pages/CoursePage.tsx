@@ -1,10 +1,18 @@
+import { CheckCircle, Lock, RadioButtonUnchecked } from '@mui/icons-material';
+import {
+  Alert, Box, Button, Chip, Container, Divider, Drawer, List, ListItemButton,
+  ListItemIcon, ListItemText, Stack, TextField, Typography,
+} from '@mui/material';
 import { useEffect, useRef, useState } from 'react';
 import { useParams, useSearchParams } from 'react-router-dom';
 import { api, LearningItemTree, RunResult, Submission } from '../api';
+import Layout from '../components/Layout';
+import { FONT_CODE } from '../theme';
 import { renderContentHtml } from '../utils/renderContent';
 
 const POLL_INTERVAL_MS = 1000;
 const TERMINAL_STATUSES = new Set(['done', 'cancelled', 'system_error']);
+const DRAWER_WIDTH = 300;
 
 const TYPE_LABEL: Record<string, string> = {
   theory: 'Теория', video: 'Видео', file: 'Файл', link: 'Ссылка',
@@ -20,26 +28,35 @@ function TreeNode({ item, depth, selectedId, onSelect }: {
 }) {
   const locked = !item.unlocked;
   return (
-    <div style={{ marginLeft: depth * 16 }}>
-      <div
+    <>
+      <ListItemButton
+        selected={selectedId === item.id}
+        disabled={locked}
         onClick={() => !locked && onSelect(item)}
-        style={{
-          padding: '6px 8px',
-          borderRadius: 6,
-          cursor: locked ? 'not-allowed' : 'pointer',
-          opacity: locked ? 0.45 : 1,
-          background: selectedId === item.id ? 'rgba(59,130,246,0.2)' : 'transparent',
-        }}
+        sx={{ pl: 2 + depth * 2 }}
+        dense
       >
-        {item.completed ? '✅ ' : locked ? '🔒 ' : '▫️ '}
-        <strong>{item.title}</strong>
-        <span style={{ color: '#9ca3af', marginLeft: 6, fontSize: '0.85em' }}>{TYPE_LABEL[item.type] || item.type}</span>
-      </div>
+        <ListItemIcon sx={{ minWidth: 30 }}>
+          {item.completed ? <CheckCircle fontSize="small" color="success" /> : locked ? <Lock fontSize="small" /> : <RadioButtonUnchecked fontSize="small" />}
+        </ListItemIcon>
+        <ListItemText
+          primary={item.title}
+          secondary={TYPE_LABEL[item.type] || item.type}
+          primaryTypographyProps={{ fontSize: '0.9rem', fontWeight: 500 }}
+          secondaryTypographyProps={{ fontSize: '0.75rem' }}
+        />
+      </ListItemButton>
       {item.children.map((c) => (
         <TreeNode key={c.id} item={c} depth={depth + 1} selectedId={selectedId} onSelect={onSelect} />
       ))}
-    </div>
+    </>
   );
+}
+
+function VerdictChip({ verdict, score }: { verdict: string | null; score: number | null }) {
+  if (!verdict) return <Chip size="small" label="проверяется" />;
+  const color = verdict === 'Accepted' ? 'success' : verdict === 'Wrong Answer' ? 'error' : 'warning';
+  return <Chip size="small" color={color} label={score !== null ? `${verdict} · ${score}` : verdict} />;
 }
 
 /** STU-002: структура курса, статусы элементов, доступность заблокированных
@@ -123,73 +140,106 @@ export default function CoursePage() {
   };
 
   return (
-    <div className="page" style={{ maxWidth: 1100, display: 'flex', gap: 24 }}>
-      <div style={{ width: 280, flexShrink: 0 }}>
-        <h1 style={{ fontSize: '1.2em' }}>Курс #{courseId}</h1>
-        {tree.map((item) => (
-          <TreeNode key={item.id} item={item} depth={0} selectedId={selected?.id ?? null} onSelect={selectItem} />
-        ))}
-      </div>
+    <Layout>
+      <Box sx={{ display: 'flex' }}>
+        <Drawer
+          variant="permanent"
+          sx={{
+            width: DRAWER_WIDTH, flexShrink: 0,
+            '& .MuiDrawer-paper': { width: DRAWER_WIDTH, position: 'sticky', top: 64, height: 'calc(100vh - 64px)' },
+          }}
+        >
+          <Typography variant="subtitle2" sx={{ px: 2, pt: 2, pb: 1, color: 'text.secondary' }}>
+            Курс #{courseId}
+          </Typography>
+          <List dense>
+            {tree.map((item) => (
+              <TreeNode key={item.id} item={item} depth={0} selectedId={selected?.id ?? null} onSelect={selectItem} />
+            ))}
+          </List>
+        </Drawer>
 
-      <div style={{ flex: 1, minWidth: 0 }}>
-        {error && <p className="error">{error}</p>}
-        {!selected && <p>Выберите элемент курса слева.</p>}
+        <Box sx={{ flex: 1, minWidth: 0 }}>
+          <Container maxWidth="md" sx={{ py: 4 }}>
+            {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
+            {!selected && <Typography color="text.secondary">Выберите элемент курса слева.</Typography>}
 
-        {selected && selected.type !== 'task' && (
-          <div>
-            <h2>{selected.title}</h2>
-            <div
-              className="preview"
-              dangerouslySetInnerHTML={{ __html: renderContentHtml(selected.content || selected.description || '') }}
-            />
-          </div>
-        )}
-
-        {selected && selected.type === 'task' && (
-          <div>
-            <h2>{selected.title}</h2>
-            <textarea className="code" rows={14} value={code} onChange={(e) => setCode(e.target.value)} />
-            <label>
-              stdin для «Запустить»:
-              <input value={stdin} onChange={(e) => setStdin(e.target.value)} />
-            </label>
-            <div className="actions">
-              <button onClick={run}>Запустить</button>
-              <button onClick={submit}>Отправить</button>
-            </div>
-            {runResult && (
-              <pre className="output">
-                stdout: {runResult.stdout}
-                {'\n'}stderr: {runResult.stderr}
-                {runResult.timed_out ? '\n(превышено время выполнения)' : ''}
-              </pre>
-            )}
-            {submission && (
-              <pre className="output">
-                статус: {submission.status}
-                {submission.verdict ? `\nвердикт: ${submission.verdict}` : ''}
-                {submission.score !== null ? `\nбалл: ${submission.score}` : ''}
-                {!TERMINAL_STATUSES.has(submission.status) ? '\n(проверяется…)' : ''}
-              </pre>
+            {selected && selected.type !== 'task' && (
+              <Box>
+                <Typography variant="h2" sx={{ mb: 2 }}>{selected.title}</Typography>
+                <Box className="preview" dangerouslySetInnerHTML={{ __html: renderContentHtml(selected.content || selected.description || '') }} />
+              </Box>
             )}
 
-            {history.length > 0 && (
-              <div style={{ marginTop: 16 }}>
-                <h3>История попыток</h3>
-                {history.map((s) => (
-                  <div key={s.id} className="output" style={{ marginBottom: 8 }}>
-                    {new Date(s.created_at).toLocaleString('ru-RU')} — {s.verdict || s.status}
-                    {s.score !== null ? ` (${s.score})` : ''}
-                    {s.manual_comment && (
-                      <div style={{ color: '#9ca3af', marginTop: 4 }}>Комментарий: {s.manual_comment}</div>
-                    )}
-                  </div>
-                ))}
-              </div>
+            {selected && selected.type === 'task' && (
+              <Box>
+                <Typography variant="h2" sx={{ mb: 2 }}>{selected.title}</Typography>
+
+                <TextField
+                  multiline fullWidth minRows={12} maxRows={24}
+                  value={code} onChange={(e) => setCode(e.target.value)}
+                  inputProps={{ style: { fontFamily: FONT_CODE, fontSize: '0.875rem' } }}
+                  sx={{ mb: 1.5, '& .MuiOutlinedInput-root': { bgcolor: 'background.paper' } }}
+                />
+                <TextField
+                  label="stdin для «Запустить»" fullWidth size="small" value={stdin}
+                  onChange={(e) => setStdin(e.target.value)}
+                  sx={{ mb: 2 }}
+                />
+
+                <Stack direction="row" spacing={1.5} sx={{ mb: 2 }}>
+                  <Button variant="outlined" onClick={run}>Запустить</Button>
+                  <Button variant="contained" onClick={submit}>Отправить</Button>
+                </Stack>
+
+                {runResult && (
+                  <Box component="pre" sx={{
+                    fontFamily: FONT_CODE, fontSize: '0.8125rem', bgcolor: 'background.paper',
+                    border: '1px solid', borderColor: 'divider', borderRadius: 2, p: 1.5, whiteSpace: 'pre-wrap', mb: 2,
+                  }}>
+                    stdout: {runResult.stdout}
+                    {'\n'}stderr: {runResult.stderr}
+                    {runResult.timed_out ? '\n(превышено время выполнения)' : ''}
+                  </Box>
+                )}
+
+                {submission && (
+                  <Stack direction="row" spacing={1.5} alignItems="center" sx={{ mb: 2 }}>
+                    <Typography variant="body2" color="text.secondary">Статус: {submission.status}</Typography>
+                    {!TERMINAL_STATUSES.has(submission.status)
+                      ? <Chip size="small" label="проверяется…" />
+                      : <VerdictChip verdict={submission.verdict} score={submission.score} />}
+                  </Stack>
+                )}
+
+                {history.length > 0 && (
+                  <Box sx={{ mt: 3 }}>
+                    <Typography variant="h3" sx={{ mb: 1.5 }}>История попыток</Typography>
+                    <Stack spacing={1}>
+                      {history.map((s) => (
+                        <Box key={s.id} sx={{ border: '1px solid', borderColor: 'divider', borderRadius: 2, p: 1.5 }}>
+                          <Stack direction="row" justifyContent="space-between" alignItems="center">
+                            <Typography variant="body2" color="text.secondary">
+                              {new Date(s.created_at).toLocaleString('ru-RU')}
+                            </Typography>
+                            <VerdictChip verdict={s.verdict} score={s.score} />
+                          </Stack>
+                          {s.manual_comment && (
+                            <>
+                              <Divider sx={{ my: 1 }} />
+                              <Typography variant="body2" color="text.secondary">Комментарий: {s.manual_comment}</Typography>
+                            </>
+                          )}
+                        </Box>
+                      ))}
+                    </Stack>
+                  </Box>
+                )}
+              </Box>
             )}
-          </div>
-        )}
-      </div>
-    </div>
+          </Container>
+        </Box>
+      </Box>
+    </Layout>
   );
 }

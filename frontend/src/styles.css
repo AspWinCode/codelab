@@ -1,95 +1,39 @@
-body {
-  font-family: system-ui, sans-serif;
-  background: #0f1115;
-  color: #e6e6e6;
-  margin: 0;
-}
-
-.page {
-  max-width: 840px;
-  margin: 0 auto;
-  padding: 24px;
-}
-
-.code {
-  width: 100%;
-  font-family: 'Fira Code', monospace;
-  background: #1a1d24;
-  color: #e6e6e6;
-  border: 1px solid #333;
-  border-radius: 6px;
-  padding: 12px;
-  box-sizing: border-box;
-}
-
-.actions {
-  margin-top: 12px;
-  display: flex;
-  gap: 8px;
-}
-
-button {
-  background: #3b82f6;
-  color: white;
-  border: none;
-  border-radius: 6px;
-  padding: 8px 16px;
-  cursor: pointer;
-}
-
-.output {
-  background: #1a1d24;
-  border: 1px solid #333;
-  border-radius: 6px;
-  padding: 12px;
-  white-space: pre-wrap;
-}
-
-.error {
-  color: #f87171;
-}
-
-label {
-  display: block;
-  margin-top: 8px;
-}
-
-input {
-  display: block;
-  width: 100%;
-  box-sizing: border-box;
-  padding: 6px;
-  margin-top: 4px;
-}
-
-.file-pick {
-  display: inline-flex;
-  align-items: center;
-  background: #2a2d34;
-  border-radius: 6px;
-  padding: 8px 16px;
-  cursor: pointer;
-  margin-top: 0;
-}
-
-.preview {
-  background: #1a1d24;
-  border: 1px solid #333;
-  border-radius: 6px;
-  padding: 16px;
-  margin-top: 12px;
-}
+/* Правила ниже — только для содержимого предпросмотра (dangerouslySetInnerHTML
+ * из Markdown, utils/renderContent.ts) — этим MUI не управляет. Остальной
+ * интерфейс собран из MUI-компонентов и темы (src/theme.ts). */
 
 .preview img,
 .preview video {
   max-width: 100%;
+  border-radius: 8px;
 }
 
 .preview pre {
-  background: #0f1115;
-  padding: 8px;
-  border-radius: 4px;
+  /* Блоки кода нарочно остаются на фиксированной тёмной теме hljs
+   * (github-dark) независимо от режима приложения — см. main.tsx. */
+  background: #0d1117;
+  padding: 12px;
+  border-radius: 8px;
   overflow-x: auto;
+}
+
+.preview :not(pre) > code {
+  background: rgba(127, 35, 204, 0.12);
+  border-radius: 4px;
+  padding: 1px 5px;
+  font-family: 'Fira Code', 'Cascadia Code', Consolas, monospace;
+  font-size: 0.9em;
+}
+
+.preview table {
+  border-collapse: collapse;
+  width: 100%;
+}
+
+.preview th,
+.preview td {
+  border: 1px solid rgba(127, 122, 145, 0.3);
+  padding: 6px 10px;
 }
 
 /* EDT-004: адаптивный контейнер 16:9 для встроенного видео (YouTube/VK/RuTube). */
@@ -108,7 +52,7 @@ input {
   width: 100%;
   height: 100%;
   border: 0;
-  border-radius: 6px;
+  border-radius: 8px;
 }
 
 .video-embed-rejected {
@@ -116,9 +60,4 @@ input {
   color: #e07a7a;
   font-size: 0.9em;
   margin: 8px 0;
-}
-
-.status {
-  color: #9ca3af;
-  font-size: 0.85em;
 }

@@ -1,6 +1,12 @@
+import { AttachFile, Functions, Movie } from '@mui/icons-material';
+import {
+  Alert, Box, Button, Container, Stack, TextField, ToggleButton, ToggleButtonGroup, Typography,
+} from '@mui/material';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { api, LearningItem } from '../api';
+import Layout from '../components/Layout';
+import { FONT_CODE } from '../theme';
 import { renderContentHtml } from '../utils/renderContent';
 
 const AUTOSAVE_INTERVAL_MS = 15_000; // EDT-006: не реже раза в 15 секунд
@@ -87,7 +93,7 @@ export default function ItemEditorPage() {
   };
 
   // EDT-002: вставка изображения из буфера обмена (Ctrl+V).
-  const handlePaste = (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+  const handlePaste = (e: React.ClipboardEvent<HTMLDivElement>) => {
     const fileItem = Array.from(e.clipboardData.items).find((i) => i.kind === 'file');
     const file = fileItem?.getAsFile();
     if (file) {
@@ -97,7 +103,7 @@ export default function ItemEditorPage() {
   };
 
   // EDT-002: вставка файла перетаскиванием.
-  const handleDrop = (e: React.DragEvent<HTMLTextAreaElement>) => {
+  const handleDrop = (e: React.DragEvent<HTMLDivElement>) => {
     const file = e.dataTransfer.files[0];
     if (file) {
       e.preventDefault();
@@ -124,56 +130,90 @@ export default function ItemEditorPage() {
     insertAtCursor(display ? '\n$$\nE = mc^2\n$$\n' : '$x^2$');
   };
 
-  if (loadError) return <div className="page error">{loadError}</div>;
-  if (!item) return <div className="page">Загрузка…</div>;
+  if (loadError) {
+    return (
+      <Layout>
+        <Container maxWidth="sm" sx={{ pt: 10 }}>
+          <Alert severity="error">{loadError}</Alert>
+        </Container>
+      </Layout>
+    );
+  }
+  if (!item) {
+    return (
+      <Layout>
+        <Container maxWidth="sm" sx={{ pt: 10 }}>
+          <Typography color="text.secondary">Загрузка…</Typography>
+        </Container>
+      </Layout>
+    );
+  }
 
   return (
-    <div className="page">
-      <h1>Редактирование элемента #{item.id}</h1>
-      <label>
-        Заголовок:
-        <input value={title} onChange={(e) => { setTitle(e.target.value); markDirty(); }} onBlur={save} />
-      </label>
+    <Layout>
+      <Container maxWidth="md" sx={{ py: 4 }}>
+        <Typography variant="h2" sx={{ mb: 2 }}>Редактирование элемента #{item.id}</Typography>
 
-      <div className="actions">
-        <button onClick={() => setMode('edit')} disabled={mode === 'edit'}>Редактировать</button>
-        {/* EDT-007: методист смотрит материал в режиме ученика до публикации. */}
-        <button onClick={() => setMode('preview')} disabled={mode === 'preview'}>Предпросмотр как ученик</button>
-        <label className="file-pick">
-          Вставить файл
-          <input type="file" onChange={handleFilePick} style={{ display: 'none' }} />
-        </label>
-        <button type="button" onClick={insertVideo}>Вставить видео</button>
-        <button type="button" onClick={() => insertFormula(false)}>Формула (инлайн)</button>
-        <button type="button" onClick={() => insertFormula(true)}>Формула (блок)</button>
-      </div>
-
-      {mode === 'edit' ? (
-        <textarea
-          ref={textareaRef}
-          className="code"
-          rows={18}
-          value={content}
-          onChange={(e) => { setContent(e.target.value); markDirty(); }}
+        <TextField
+          label="Заголовок" fullWidth value={title}
+          onChange={(e) => { setTitle(e.target.value); markDirty(); }}
           onBlur={save}
-          onPaste={handlePaste}
-          onDrop={handleDrop}
-          onDragOver={(e) => e.preventDefault()}
-          placeholder="Markdown: # заголовок, **жирный**, - список, ```код```, вставьте изображение через Ctrl+V или перетащите файл"
+          sx={{ mb: 2 }}
         />
-      ) : (
-        // SEC-006/SEC-007: marked пропускает сырой HTML из исходного текста как есть —
-        // без санации методист (случайно или намеренно) мог бы вставить <script>,
-        // который потом выполнится в браузере ученика.
-        <div className="preview" dangerouslySetInnerHTML={{ __html: renderContentHtml(content) }} />
-      )}
 
-      {uploadError && <p className="error">{uploadError}</p>}
-      <p className="status">
-        {status === 'saving' && 'сохраняется…'}
-        {status === 'saved' && 'сохранено'}
-        {status === 'error' && 'ошибка сохранения'}
-      </p>
-    </div>
+        <Stack direction="row" spacing={1.5} alignItems="center" flexWrap="wrap" useFlexGap sx={{ mb: 2 }}>
+          <ToggleButtonGroup size="small" exclusive value={mode} onChange={(_, v) => v && setMode(v)}>
+            <ToggleButton value="edit">Редактировать</ToggleButton>
+            {/* EDT-007: методист смотрит материал в режиме ученика до публикации. */}
+            <ToggleButton value="preview">Предпросмотр как ученик</ToggleButton>
+          </ToggleButtonGroup>
+
+          <Button component="label" size="small" variant="outlined" startIcon={<AttachFile fontSize="small" />}>
+            Вставить файл
+            <input type="file" hidden onChange={handleFilePick} />
+          </Button>
+          <Button size="small" variant="outlined" startIcon={<Movie fontSize="small" />} onClick={insertVideo}>
+            Видео
+          </Button>
+          <Button size="small" variant="outlined" startIcon={<Functions fontSize="small" />} onClick={() => insertFormula(false)}>
+            Формула
+          </Button>
+          <Button size="small" variant="outlined" onClick={() => insertFormula(true)}>
+            Формула (блок)
+          </Button>
+        </Stack>
+
+        {mode === 'edit' ? (
+          <TextField
+            inputRef={textareaRef}
+            multiline fullWidth minRows={18} maxRows={40}
+            value={content}
+            onChange={(e) => { setContent(e.target.value); markDirty(); }}
+            onBlur={save}
+            onPaste={handlePaste}
+            onDrop={handleDrop}
+            onDragOver={(e) => e.preventDefault()}
+            placeholder="Markdown: # заголовок, **жирный**, - список, ```код```, вставьте изображение через Ctrl+V или перетащите файл"
+            inputProps={{ style: { fontFamily: FONT_CODE, fontSize: '0.875rem' } }}
+          />
+        ) : (
+          // SEC-006/SEC-007: marked пропускает сырой HTML из исходного текста как есть —
+          // без санации методист (случайно или намеренно) мог бы вставить <script>,
+          // который потом выполнится в браузере ученика.
+          <Box
+            className="preview"
+            sx={{ border: '1px solid', borderColor: 'divider', borderRadius: 2, p: 2.5, bgcolor: 'background.paper' }}
+            dangerouslySetInnerHTML={{ __html: renderContentHtml(content) }}
+          />
+        )}
+
+        {uploadError && <Alert severity="error" sx={{ mt: 2 }}>{uploadError}</Alert>}
+        <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 1.5 }}>
+          {status === 'saving' && 'сохраняется…'}
+          {status === 'saved' && 'сохранено'}
+          {status === 'error' && 'ошибка сохранения'}
+        </Typography>
+      </Container>
+    </Layout>
   );
 }
