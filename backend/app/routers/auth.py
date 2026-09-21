@@ -1,11 +1,13 @@
 """IAM-001..003: вход по SSO-токену от портала."""
+from datetime import datetime, timezone
+
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.database import get_db
 from app.deps import get_current_user
-from app.models import AuditEvent, Course, Enrollment, EnrollmentStatus, NotificationType, User
+from app.models import AuditEvent, Course, Enrollment, EnrollmentStatus, LoginEvent, NotificationType, User
 from app.schemas import MeOut
 from app.security import create_local_session_token, verify_lms_sso_token
 from app.services.notifications import notify
@@ -71,6 +73,9 @@ def sso_login(response: Response, token: str = Query(...), course: int | None = 
         object_id=user.id,
         meta={"new_account": is_new, "course": course},
     ))
+    # IAM-004: администратор должен просматривать историю входов.
+    db.add(LoginEvent(user_id=user.id))
+    user.last_login_at = datetime.now(timezone.utc)
     db.commit()
 
     if newly_enrolled_course_title:

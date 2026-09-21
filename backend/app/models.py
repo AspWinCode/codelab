@@ -83,12 +83,29 @@ class User(Base):
     groups = Column(JSON, nullable=False, default=list)
     directions = Column(JSON, nullable=False, default=list)
     is_blocked = Column(Boolean, nullable=False, default=False)
+    # IAM-004: "завершить активные сессии" — раз сессия это подписанный JWT без
+    # состояния на сервере, отозвать конкретный токен нельзя; вместо этого
+    # любой токен, выданный ДО этой отметки, считается недействительным
+    # (проверка в app/deps.py по iat).
+    sessions_invalidated_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     last_login_at = Column(DateTime(timezone=True), nullable=True)
 
     enrollments = relationship("Enrollment", back_populates="user")
     drafts = relationship("Draft", back_populates="user")
     submissions = relationship("Submission", back_populates="user")
+
+
+class LoginEvent(Base):
+    """IAM-004: история входов — администратор должен её просматривать."""
+
+    __tablename__ = "login_events"
+
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    user = relationship("User")
 
 
 class Course(Base):

@@ -14,9 +14,12 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.models import Course, LearningItem, User
+from app.models import Course, LearningItem, LoginEvent, User
 from app.schemas import (
+    AdminLoginEventOut,
     AdminSystemStatusOut,
+    AdminUserBlockIn,
+    AdminUserOut,
     CourseAnalyticsOut,
     CourseCreate,
     CourseOut,
@@ -221,3 +224,82 @@ def get_system_status(db: Session = Depends(get_db), staff: User = Depends(resol
     if staff.role != "admin":
         raise HTTPException(status_code=403, detail="Доступно только администратору")
     return admin_status.get_system_status(db)
+
+
+def _require_admin(staff: User) -> None:
+    if staff.role != "admin":
+        raise HTTPException(status_code=403, detail="Доступно только администратору")
+
+
+def _get_user_or_404(db: Session, user_id: int) -> User:
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="Пользователь не найден")
+    return user
+
+
+@router.get("/admin/users", response_model=list[AdminUserOut])
+def list_users(
+    q: str | None = Query(default=None, description="Поиск по имени или external_ref"),
+    db: Session = Depends(get_db),
+    staff: User = Depends(resolve_staff_user),
+):
+    """IAM-004: поиск пользователей для блокировки/просмотра истории входов."""
+    _require_admin(staff)
+    query = db.query(User)
+    if q:
+        like = f"%{q}%"
+        query = query.filter((User.full_name.ilike(like)) | (User.external_ref.ilike(like)))
+    return query.order_by(User.full_name).limit(50).all()
+
+
+@router.put("/admin/users/{user_id}/block", response_model=AdminUserOut)
+def set_user_blocked(
+    user_id: int,
+    payload: AdminUserBlockIn,
+    db: Session = Depends(get_db),
+    staff: User = Depends(resolve_staff_user),
+):
+    """IAM-004: блокировка/разблокировка учётной записи."""
+    _require_admin(staff)
+    user = _get_user_or_404(db, user_id)
+    user.is_blocked = payload.blocked
+    db.commit()
+    db.refresh(user)
+    return user
+
+
+@router.post("/admin/users/{user_id}/terminate-sessions", response_model=AdminUserOut)
+def terminate_user_sessions(
+    user_id: int,
+    db: Session = Depends(get_db),
+    staff: User = Depends(resolve_staff_user),
+):
+    """IAM-004: "завершить активные сессии" — токены без состояния на сервере,
+    поэтому отзываем все, выданные до текущего момента (см. app/deps.py)."""
+    from datetime import datetime, timezone
+
+    _require_admin(staff)
+    user = _get_user_or_404(db, user_id)
+    user.sessions_invalidated_at = datetime.now(timezone.utc)
+    db.commit()
+    db.refresh(user)
+    return user
+
+
+@router.get("/admin/users/{user_id}/login-history", response_model=list[AdminLoginEventOut])
+def get_user_login_history(
+    user_id: int,
+    db: Session = Depends(get_db),
+    staff: User = Depends(resolve_staff_user),
+):
+    """IAM-004: история входов пользователя."""
+    _require_admin(staff)
+    _get_user_or_404(db, user_id)
+    return (
+        db.query(LoginEvent)
+        .filter(LoginEvent.user_id == user_id)
+        .order_by(LoginEvent.created_at.desc())
+        .limit(50)
+        .all()
+    )

@@ -310,3 +310,24 @@ class AdminSystemStatusOut(BaseModel):
     queue: AdminQueueStatus
     errors: AdminErrorStatus
     storage: AdminStorageStatus
+
+
+class AdminUserOut(BaseModel):
+    """IAM-004: карточка пользователя для блокировки/истории входов."""
+
+    id: int
+    external_ref: str
+    full_name: str
+    role: str
+    is_blocked: bool
+    last_login_at: Optional[datetime]
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class AdminUserBlockIn(BaseModel):
+    blocked: bool
+
+
+class AdminLoginEventOut(BaseModel):
+    created_at: datetime

@@ -53,9 +53,13 @@ def create_local_session_token(user_id: int, ttl_hours: int = 12) -> str:
     return jwt.encode(payload, settings.secret_key, algorithm=ALGORITHM)
 
 
-def decode_local_session_token(token: str) -> Optional[int]:
+def decode_local_session_token(token: str) -> Optional[tuple[int, datetime]]:
+    """(user_id, issued_at) — issued_at нужен app/deps.py, чтобы отклонять
+    токены, выданные до User.sessions_invalidated_at (IAM-004: "завершить
+    активные сессии" для JWT без состояния на сервере)."""
     try:
         payload = jwt.decode(token, settings.secret_key, algorithms=[ALGORITHM])
-        return int(payload["sub"])
+        issued_at = datetime.fromtimestamp(payload["iat"], tz=timezone.utc)
+        return int(payload["sub"]), issued_at
     except (JWTError, KeyError, ValueError):
         return None
