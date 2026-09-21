@@ -8,7 +8,7 @@ from app.deps import get_current_user, require_role
 from app.models import Draft, ProblemRevision, Submission, SubmissionStatus, User
 from app.schemas import ManualGradeIn, RunRequest, RunResult, SubmissionCreate, SubmissionOut
 from app.services.progress_calc import apply_manual_grade
-from app.services.runner import run_python
+from app.services.runner import run_for_problem
 
 router = APIRouter()
 
@@ -30,7 +30,7 @@ def run_code(payload: RunRequest, db: Session = Depends(get_db), user: User = De
         db.add(Draft(user_id=user.id, problem_revision_id=problem.id, code=payload.code))
     db.commit()
 
-    return run_python(payload.code, payload.stdin, problem.time_limit_ms, problem.memory_limit_mb)
+    return run_for_problem(problem, payload.code, payload.stdin)
 
 
 @router.post("", response_model=SubmissionOut)

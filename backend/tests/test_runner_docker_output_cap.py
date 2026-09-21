@@ -4,7 +4,7 @@
 from unittest.mock import patch
 
 from app.services import runner_docker
-from app.services.runner_docker import OUTPUT_DISPLAY_LIMIT, OUTPUT_KILL_THRESHOLD, run_python_sandboxed
+from app.services.runner_docker import OUTPUT_DISPLAY_LIMIT, OUTPUT_KILL_THRESHOLD, run_sandboxed
 
 
 class _FakeStream:
@@ -52,7 +52,7 @@ def test_normal_output_returned_untouched():
          patch.object(runner_docker.subprocess, "run") as mock_run, \
          patch.object(runner_docker, "_POLL_INTERVAL_SECONDS", 0), \
          patch.object(runner_docker.time, "monotonic", side_effect=[0, 100, 100, 100, 100]):
-        result = run_python_sandboxed("print('hello')", "", time_limit_ms=1)
+        result = run_sandboxed("python3", "print('hello')", "", time_limit_ms=1)
 
     assert result.stdout == small
     assert result.timed_out is True  # дедлайн истёк по времени, а не по объёму — это ожидаемо для этого фейка
@@ -63,7 +63,7 @@ def test_output_far_beyond_display_limit_is_capped_and_kills_early():
     huge = "x" * (OUTPUT_KILL_THRESHOLD + 1_000)
     with patch.object(runner_docker.subprocess, "Popen", return_value=_FakeProc(huge)), \
          patch.object(runner_docker.subprocess, "run") as mock_run:
-        result = run_python_sandboxed("while True: print('x' * 100_000)", "")
+        result = run_sandboxed("python3", "while True: print('x' * 100_000)", "")
 
     assert len(result.stdout) == OUTPUT_DISPLAY_LIMIT
     assert result.stdout == "x" * OUTPUT_DISPLAY_LIMIT

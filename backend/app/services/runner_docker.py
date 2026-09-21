@@ -2,23 +2,30 @@
 
 Каждый прогон — одноразовый контейнер:
 - без сети (JDG-003: доступ в интернет из Runner запрещён по умолчанию);
-- read-only корневая ФС + ограниченный по размеру tmpfs без exec (нет
-  доступа на запись за пределы /tmp, нельзя исполнять файлы из /tmp);
+- read-only корневая ФС + ограниченный по размеру tmpfs без exec, кроме
+  окружений, которым для запуска нужно писать и исполнять файл (сейчас —
+  только cpp17, где скомпилированный бинарник больше негде разместить,
+  см. Environment.tmp_exec в app/services/environments.py);
 - лимиты CPU, RAM (без свопа сверх лимита) и числа процессов — защита от
   fork-бомб и чрезмерного потребления ресурсов (JDG-002);
 - без Linux capabilities и без privilege escalation (SEC-004);
 - от непривилегированного пользователя (uid/gid 65534, "nobody");
 - без доступа к БД, секретам и метаданным облака — контейнер вообще не
-  видит переменные окружения и файлы хост-процесса, кроме примонтированного
-  read-only файла с решением.
+  видит переменные окружения и файлы хост-процесса, кроме примонтированных
+  read-only файлов решения (и, для SQL-окружения, файла базы-фикстуры).
 
 Уничтожается сразу после завершения через --rm; при таймауте контейнер
 принудительно убивается по имени (JDG-011) — не полагаемся на завершение
 дочернего процесса `docker run` со стороны хоста, это не останавливает сам
 контейнер.
 
+Какой образ и какая команда запускается — определяет реестр окружений
+(ADM-001/002/003, app/services/environments.py), не этот модуль: здесь
+только универсальный механизм изоляции и обрезки вывода, общий для всех
+языков.
+
 Требует установленный Docker (Engine/Desktop) на узле, где работает Judge,
-и собранный образ `codelab-runner:python3.12` (см. sandbox/Dockerfile).
+и собранные образы окружений (см. backend/sandbox/*/Dockerfile).
 """
 import subprocess
 import tempfile
@@ -29,8 +36,8 @@ from pathlib import Path
 
 from app.config import settings
 from app.schemas import RunResult
+from app.services.environments import Environment, get_environment
 
-CONTAINER_CODE_PATH = "/sandbox/solution.py"
 # Запас поверх лимита задачи на старт/остановку контейнера — не часть
 # лимита времени самого решения, только защита от зависшего docker run.
 STARTUP_GRACE_SECONDS = 5
@@ -51,14 +58,21 @@ _READ_CHUNK_SIZE = 65_536
 _POLL_INTERVAL_SECONDS = 0.05
 
 
-def _build_docker_args(container_name: str, host_code_path: str, memory_limit_mb: int) -> list[str]:
-    return [
+def _build_docker_args(
+    container_name: str,
+    environment: Environment,
+    host_code_path: str,
+    memory_limit_mb: int,
+    extra_mounts: list[tuple[str, str]] | None = None,
+) -> list[str]:
+    tmpfs_opts = "rw,size=64m,nosuid" + ("" if environment.tmp_exec else ",noexec")
+    args = [
         "docker", "run",
         "--rm",
         "--name", container_name,
         "--network", "none",
         "--read-only",
-        "--tmpfs", "/tmp:rw,size=64m,noexec,nosuid",
+        "--tmpfs", f"/tmp:{tmpfs_opts}",
         "--memory", f"{memory_limit_mb}m",
         "--memory-swap", f"{memory_limit_mb}m",
         "--cpus", str(settings.runner_cpus),
@@ -67,10 +81,12 @@ def _build_docker_args(container_name: str, host_code_path: str, memory_limit_mb
         "--security-opt", "no-new-privileges",
         "--user", "65534:65534",
         "-i",
-        "-v", f"{host_code_path}:{CONTAINER_CODE_PATH}:ro",
-        settings.runner_docker_image,
-        "python3", CONTAINER_CODE_PATH,
+        "-v", f"{host_code_path}:/sandbox/{environment.file_name}:ro",
     ]
+    for host_path, container_path in extra_mounts or []:
+        args += ["-v", f"{host_path}:{container_path}:ro"]
+    args += [environment.docker_image, *environment.container_cmd]
+    return args
 
 
 def _read_capped(stream, cap: int, kill_threshold: int, exceeded: threading.Event, result: dict, key: str) -> None:
@@ -94,12 +110,30 @@ def _read_capped(stream, cap: int, kill_threshold: int, exceeded: threading.Even
     result[key] = "".join(kept)
 
 
-def run_python_sandboxed(code: str, stdin: str, time_limit_ms: int = 2000, memory_limit_mb: int = 256) -> RunResult:
+def run_sandboxed(
+    environment_id: str,
+    code: str,
+    stdin: str,
+    time_limit_ms: int = 2000,
+    memory_limit_mb: int = 256,
+    extra_files: dict[str, bytes] | None = None,
+) -> RunResult:
+    """extra_files: {путь_в_контейнере: содержимое} — например, файл базы
+    для sql-sqlite (ADM-003, собирается в app/services/runner.py из
+    ProblemRevision.sql_fixture); монтируется read-only рядом с решением."""
+    environment = get_environment(environment_id)
     container_name = f"codelab-run-{uuid.uuid4().hex[:12]}"
     with tempfile.TemporaryDirectory() as tmp:
-        code_path = Path(tmp) / "solution.py"
+        code_path = Path(tmp) / environment.file_name
         code_path.write_text(code, encoding="utf-8")
-        args = _build_docker_args(container_name, str(code_path), memory_limit_mb)
+
+        extra_mounts: list[tuple[str, str]] = []
+        for container_path, data in (extra_files or {}).items():
+            host_path = Path(tmp) / Path(container_path).name
+            host_path.write_bytes(data)
+            extra_mounts.append((str(host_path), container_path))
+
+        args = _build_docker_args(container_name, environment, str(code_path), memory_limit_mb, extra_mounts)
 
         try:
             proc = subprocess.Popen(

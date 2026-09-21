@@ -1,7 +1,9 @@
 from datetime import datetime
 from typing import List, Optional
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, field_validator
+
+from app.services.environments import ENVIRONMENTS
 
 
 class ProblemTestIn(BaseModel):
@@ -21,7 +23,9 @@ class ProblemRevisionCreate(BaseModel):
     examples: List[dict] = []
     template_code: Optional[str] = None
     reference_solution: Optional[str] = None
-    language: str = "python3"
+    language: str = "python3"  # id окружения — см. GET /api/lms-admin/environments (ADM-001)
+    # ADM-003: обязателен для language="sql-sqlite" — схема+seed (CREATE TABLE/INSERT).
+    sql_fixture: Optional[str] = None
     time_limit_ms: int = 2000
     memory_limit_mb: int = 256
     allowed_libraries: List[str] = []
@@ -29,6 +33,13 @@ class ProblemRevisionCreate(BaseModel):
     checker: str = "exact"
     max_attempts: Optional[int] = None
     scoring_policy: str = "best"
+
+    @field_validator("language")
+    @classmethod
+    def _language_must_be_registered(cls, value: str) -> str:
+        if value not in ENVIRONMENTS:
+            raise ValueError(f"Неизвестное окружение исполнения: {value!r}. См. GET /api/lms-admin/environments")
+        return value
 
 
 class ProblemRevisionOut(ProblemRevisionCreate):
@@ -331,3 +342,14 @@ class AdminUserBlockIn(BaseModel):
 
 class AdminLoginEventOut(BaseModel):
     created_at: datetime
+
+
+class EnvironmentOut(BaseModel):
+    """ADM-001: пункт реестра окружений исполнения — методист выбирает
+    отсюда при создании задачи (ProblemRevisionCreate.language)."""
+
+    id: str
+    label: str
+    allowed_libraries: List[str]
+    status: str  # ready | beta
+    status_note: str

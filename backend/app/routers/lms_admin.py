@@ -23,6 +23,7 @@ from app.schemas import (
     CourseAnalyticsOut,
     CourseCreate,
     CourseOut,
+    EnvironmentOut,
     LearningItemCreate,
     LearningItemOut,
     LearningItemTree,
@@ -37,6 +38,7 @@ from app.schemas import (
 )
 from app.security import verify_lms_signature
 from app.services import admin_status, analytics, course_admin
+from app.services.environments import list_environments
 from app.services.progress_calc import apply_manual_grade
 
 router = APIRouter()
@@ -64,6 +66,21 @@ def resolve_staff_user(
     db.commit()
     db.refresh(user)
     return user
+
+
+@router.get("/environments", response_model=list[EnvironmentOut])
+def get_environments(staff: User = Depends(resolve_staff_user)):
+    """ADM-001: реестр окружений исполнения — методист выбирает отсюда язык
+    задачи (ProblemRevisionCreate.language), а не гадает, что установлено в
+    образе. Доступно любому авторизованному сотруднику LMS, не только admin —
+    это справочная информация, нужная при авторстве курса."""
+    return [
+        EnvironmentOut(
+            id=e.id, label=e.label, allowed_libraries=e.allowed_libraries,
+            status=e.status, status_note=e.status_note,
+        )
+        for e in list_environments()
+    ]
 
 
 @router.get("/courses", response_model=list[CourseOut])

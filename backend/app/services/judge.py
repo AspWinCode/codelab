@@ -2,7 +2,7 @@
 и сведение результата по группам тестов (JDG-008 — упрощённо, без весов групп)."""
 from app.models import ProblemRevision, Verdict
 from app.schemas import RunResult
-from app.services.runner import run_python
+from app.services.runner import run_for_problem
 
 
 def _compare(expected: str, actual: str, checker: str) -> bool:
@@ -23,7 +23,7 @@ def judge_submission(problem: ProblemRevision, code: str) -> tuple[Verdict, floa
     passed = 0
     last_stdout, last_stderr = "", ""
     for test in tests:
-        result: RunResult = run_python(code, test.get("input", ""), problem.time_limit_ms, problem.memory_limit_mb)
+        result: RunResult = run_for_problem(problem, code, test.get("input", ""))
         last_stdout, last_stderr = result.stdout, result.stderr
         if result.timed_out:
             return Verdict.TIME_LIMIT_EXCEEDED, round(100 * passed / len(tests), 2), last_stdout, last_stderr

@@ -198,7 +198,11 @@ class ProblemRevision(Base):
     examples = Column(JSON, nullable=False, default=list)  # [{"input": "...", "output": "..."}]
     template_code = Column(Text, nullable=True)
     reference_solution = Column(Text, nullable=True)
-    language = Column(String(32), nullable=False, default="python3")
+    language = Column(String(32), nullable=False, default="python3")  # id из app/services/environments.py (ADM-001/002/003)
+    # ADM-003: схема+seed для окружения sql-sqlite — CREATE TABLE/INSERT,
+    # исполняется доверенным кодом методиста (не решением ученика) при сборке
+    # свежей базы перед каждым прогоном, см. app/services/runner.py.
+    sql_fixture = Column(Text, nullable=True)
     time_limit_ms = Column(Integer, nullable=False, default=2000)
     memory_limit_mb = Column(Integer, nullable=False, default=256)
     allowed_libraries = Column(JSON, nullable=False, default=list)
