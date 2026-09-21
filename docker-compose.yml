@@ -42,9 +42,13 @@ services:
       SSO_KODEX_SHARED_SECRET: ${SSO_KODEX_SHARED_SECRET}
       FRONTEND_BASE_URL: ${FRONTEND_BASE_URL}
       RUNNER_BACKEND: docker
+      RUNNER_TMP_DIR: /root/codelab/judge-tmp
     volumes:
       - codelab_uploads:/app/uploads
       - /var/run/docker.sock:/var/run/docker.sock
+      # Docker-outside-of-Docker: тот же путь по обе стороны — см.
+      # Settings.runner_tmp_dir в app/config.py.
+      - /root/codelab/judge-tmp:/root/codelab/judge-tmp
     depends_on:
       db:
         condition: service_healthy
@@ -61,9 +65,11 @@ services:
       SSO_KODEX_SHARED_SECRET: ${SSO_KODEX_SHARED_SECRET}
       FRONTEND_BASE_URL: ${FRONTEND_BASE_URL}
       RUNNER_BACKEND: docker
+      RUNNER_TMP_DIR: /root/codelab/judge-tmp
       SKIP_MIGRATIONS: "1"  # backend уже прогнал alembic upgrade head при старте
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
+      - /root/codelab/judge-tmp:/root/codelab/judge-tmp
     depends_on:
       db:
         condition: service_healthy

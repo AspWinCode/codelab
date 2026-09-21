@@ -123,7 +123,7 @@ def run_sandboxed(
     ProblemRevision.sql_fixture); монтируется read-only рядом с решением."""
     environment = get_environment(environment_id)
     container_name = f"codelab-run-{uuid.uuid4().hex[:12]}"
-    with tempfile.TemporaryDirectory() as tmp:
+    with tempfile.TemporaryDirectory(dir=settings.runner_tmp_dir or None) as tmp:
         code_path = Path(tmp) / environment.file_name
         code_path.write_text(code, encoding="utf-8")
 
