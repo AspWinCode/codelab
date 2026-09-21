@@ -143,6 +143,39 @@ class LastPositionIn(BaseModel):
     item_id: int
 
 
+class CourseOverviewOut(BaseModel):
+    """ANA-001: агрегированные метрики курса."""
+
+    course_id: int
+    enrolled_count: int
+    completed_count: int
+    completion_percent: float
+    avg_score: float
+    median_score: float
+    total_attempts: int
+    overdue_count: int
+
+
+class TaskDifficultyOut(BaseModel):
+    """ANA-002: рейтинг задачи по сложности."""
+
+    item_id: int
+    title: str
+    attempts_total: int
+    students_attempted: int
+    students_solved: int
+    students_not_attempted: int
+    failure_rate_percent: float
+    avg_attempts_to_solve: Optional[float]
+    most_common_failure_verdict: Optional[str]
+
+
+class CourseAnalyticsOut(BaseModel):
+    generated_at: datetime  # ANA-005: дата актуальности метрик
+    overview: CourseOverviewOut
+    tasks: List[TaskDifficultyOut]
+
+
 class SubmissionReviewOut(BaseModel):
     """TCH-001/003: обзор посылок курса для преподавателя/методиста."""
 

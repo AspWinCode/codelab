@@ -16,6 +16,7 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models import Course, LearningItem, User
 from app.schemas import (
+    CourseAnalyticsOut,
     CourseCreate,
     CourseOut,
     LearningItemCreate,
@@ -29,7 +30,7 @@ from app.schemas import (
     SubmissionReviewOut,
 )
 from app.security import verify_lms_signature
-from app.services import course_admin
+from app.services import analytics, course_admin
 from app.services.progress_calc import apply_manual_grade
 
 router = APIRouter()
@@ -138,3 +139,15 @@ def grade_submission(
 ):
     """GRD-004/TCH-004: ручная корректировка результата с обязательным комментарием."""
     return apply_manual_grade(db, submission_id, payload.score, payload.comment)
+
+
+@router.get("/courses/{course_id}/analytics", response_model=CourseAnalyticsOut)
+def get_course_analytics(course_id: int, db: Session = Depends(get_db), staff: User = Depends(resolve_staff_user)):
+    """ANA-001/002/005: сводка по курсу и рейтинг задач по сложности."""
+    from datetime import datetime, timezone
+
+    return CourseAnalyticsOut(
+        generated_at=datetime.now(timezone.utc),
+        overview=analytics.course_overview(db, course_id),
+        tasks=analytics.task_difficulty(db, course_id),
+    )
