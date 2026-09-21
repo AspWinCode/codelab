@@ -31,6 +31,8 @@ def list_courses(db: Session = Depends(get_db), user: User = Depends(get_current
     query = db.query(Course)
     if user.role == "student":
         query = query.filter(Course.status == CourseStatus.PUBLISHED)
+    elif user.role == "methodist":
+        query = query.filter(Course.created_by_id == user.id)
     return query.order_by(Course.id).all()
 
 
@@ -46,6 +48,7 @@ def create_task(
     db: Session = Depends(get_db),
     user: User = Depends(require_role("methodist", "admin")),
 ):
+    course_admin.ensure_course_owner(course_admin.get_course_or_404(db, course_id), user)
     return course_admin.create_task(db, course_id, payload, author_id=user.id)
 
 
@@ -56,6 +59,7 @@ def create_item(
     db: Session = Depends(get_db),
     user: User = Depends(require_role("methodist", "admin")),
 ):
+    course_admin.ensure_course_owner(course_admin.get_course_or_404(db, course_id), user)
     return course_admin.create_item(db, course_id, payload)
 
 
@@ -74,11 +78,15 @@ def update_item(
     db: Session = Depends(get_db),
     user: User = Depends(require_role("methodist", "admin")),
 ):
+    _, course = course_admin.get_course_for_item(db, item_id)
+    course_admin.ensure_course_owner(course, user)
     return course_admin.update_item(db, item_id, payload)
 
 
 @router.delete("/items/{item_id}")
 def delete_item(item_id: int, db: Session = Depends(get_db), user: User = Depends(require_role("methodist", "admin"))):
+    _, course = course_admin.get_course_for_item(db, item_id)
+    course_admin.ensure_course_owner(course, user)
     course_admin.delete_item(db, item_id)
     return {"ok": True}
 
@@ -96,6 +104,7 @@ def get_tree(course_id: int, db: Session = Depends(get_db), user: User = Depends
             raise HTTPException(status_code=404, detail="Курс ещё не опубликован")
         version_id = course.active_version_id
     else:
+        course_admin.ensure_course_owner(course, user)
         version_id = course_admin.get_draft_version(db, course_id).id
 
     items = db.query(LearningItem).filter(LearningItem.course_version_id == version_id).order_by(LearningItem.position).all()
@@ -133,9 +142,11 @@ def set_last_position(
 
 @router.post("/{course_id}/publish", response_model=CourseOut)
 async def publish_course(course_id: int, db: Session = Depends(get_db), user: User = Depends(require_role("methodist", "admin"))):
+    course_admin.ensure_course_owner(course_admin.get_course_or_404(db, course_id), user)
     return await course_admin.publish_course(db, course_id, actor_id=user.id)
 
 
 @router.post("/{course_id}/unpublish", response_model=CourseOut)
 async def unpublish_course(course_id: int, db: Session = Depends(get_db), user: User = Depends(require_role("methodist", "admin"))):
+    course_admin.ensure_course_owner(course_admin.get_course_or_404(db, course_id), user)
     return await course_admin.unpublish_course(db, course_id, actor_id=user.id)

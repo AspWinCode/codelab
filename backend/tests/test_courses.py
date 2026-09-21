@@ -69,3 +69,27 @@ def test_course_tree_and_publish_flow(client, db_session):
     resp = client.put(f"/api/courses/items/{draft_item_id}", json={"title": "Переименовано"})
     assert resp.status_code == 200
     assert resp.json()["title"] == "Переименовано"
+
+
+def test_methodist_cannot_edit_foreign_course_via_cookie_session(client, db_session):
+    """RBAC-002 — та же проверка владения, что и у /api/lms-admin/*, должна
+    действовать и на прямом браузерном SSO-cookie входе методиста, а не
+    только на серверном пути от LMS."""
+    methodist_a = make_user(db_session, "methodist", external_ref="lp-user-a")
+    methodist_b = make_user(db_session, "methodist", external_ref="lp-user-b")
+
+    as_user(client, methodist_a)
+    course = client.post("/api/courses", json={"title": "Курс A"}).json()
+
+    as_user(client, methodist_b)
+    resp = client.post(f"/api/courses/{course['id']}/tasks", json={"title": "T", "tests": []})
+    assert resp.status_code == 403
+
+    resp = client.get(f"/api/courses/{course['id']}/tree")
+    assert resp.status_code == 403
+
+    resp = client.post(f"/api/courses/{course['id']}/publish")
+    assert resp.status_code == 403
+
+    listed = client.get("/api/courses").json()
+    assert course["id"] not in [c["id"] for c in listed]
