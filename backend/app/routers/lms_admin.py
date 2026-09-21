@@ -62,7 +62,15 @@ def resolve_staff_user(
 
 @router.get("/courses", response_model=list[CourseOut])
 def list_courses(db: Session = Depends(get_db), staff: User = Depends(resolve_staff_user)):
-    return db.query(Course).order_by(Course.id).all()
+    """RBAC-002: методист видит только свои курсы (для управления ими).
+    Teacher/admin видят все опубликованные курсы платформы — им нужно
+    выбирать среди курсов, которые создавали разные методисты, чтобы
+    посмотреть посылки/аналитику своей группы, привязка "курс → методист"
+    для этого не имеет значения."""
+    query = db.query(Course)
+    if staff.role == "methodist":
+        query = query.filter(Course.created_by_id == staff.id)
+    return query.order_by(Course.id).all()
 
 
 @router.post("/courses", response_model=CourseOut)
@@ -77,6 +85,7 @@ def create_task(
     db: Session = Depends(get_db),
     staff: User = Depends(resolve_staff_user),
 ):
+    course_admin.ensure_course_owner(course_admin.get_course_or_404(db, course_id), staff)
     return course_admin.create_task(db, course_id, payload, author_id=staff.id)
 
 
@@ -87,6 +96,7 @@ def create_item(
     db: Session = Depends(get_db),
     staff: User = Depends(resolve_staff_user),
 ):
+    course_admin.ensure_course_owner(course_admin.get_course_or_404(db, course_id), staff)
     return course_admin.create_item(db, course_id, payload)
 
 
@@ -97,11 +107,15 @@ def update_item(
     db: Session = Depends(get_db),
     staff: User = Depends(resolve_staff_user),
 ):
+    _, course = course_admin.get_course_for_item(db, item_id)
+    course_admin.ensure_course_owner(course, staff)
     return course_admin.update_item(db, item_id, payload)
 
 
 @router.delete("/items/{item_id}")
 def delete_item(item_id: int, db: Session = Depends(get_db), staff: User = Depends(resolve_staff_user)):
+    _, course = course_admin.get_course_for_item(db, item_id)
+    course_admin.ensure_course_owner(course, staff)
     course_admin.delete_item(db, item_id)
     return {"ok": True}
 
@@ -109,6 +123,7 @@ def delete_item(item_id: int, db: Session = Depends(get_db), staff: User = Depen
 @router.get("/courses/{course_id}/tree", response_model=list[LearningItemTree])
 def get_tree(course_id: int, db: Session = Depends(get_db), staff: User = Depends(resolve_staff_user)):
     """Всегда черновик — это рабочая версия методиста, не то, что видят ученики."""
+    course_admin.ensure_course_owner(course_admin.get_course_or_404(db, course_id), staff)
     version = course_admin.get_draft_version(db, course_id)
     items = db.query(LearningItem).filter(LearningItem.course_version_id == version.id).order_by(LearningItem.position).all()
     return course_admin.build_tree(items)
@@ -116,17 +131,23 @@ def get_tree(course_id: int, db: Session = Depends(get_db), staff: User = Depend
 
 @router.post("/courses/{course_id}/publish", response_model=CourseOut)
 async def publish_course(course_id: int, db: Session = Depends(get_db), staff: User = Depends(resolve_staff_user)):
+    course_admin.ensure_course_owner(course_admin.get_course_or_404(db, course_id), staff)
     return await course_admin.publish_course(db, course_id, actor_id=staff.id)
 
 
 @router.post("/courses/{course_id}/unpublish", response_model=CourseOut)
 async def unpublish_course(course_id: int, db: Session = Depends(get_db), staff: User = Depends(resolve_staff_user)):
+    course_admin.ensure_course_owner(course_admin.get_course_or_404(db, course_id), staff)
     return await course_admin.unpublish_course(db, course_id, actor_id=staff.id)
 
 
 @router.get("/courses/{course_id}/submissions", response_model=list[SubmissionReviewOut])
 def list_course_submissions(course_id: int, db: Session = Depends(get_db), staff: User = Depends(resolve_staff_user)):
-    """TCH-001/003: преподаватель/методист смотрит посылки учеников по курсу."""
+    """TCH-001/003: преподаватель/методист смотрит посылки учеников по курсу.
+    RBAC-002: методисту — только по своим курсам; у преподавателя фильтрация
+    по своим группам делается на стороне LMS (там есть группы), см. README."""
+    if staff.role == "methodist":
+        course_admin.ensure_course_owner(course_admin.get_course_or_404(db, course_id), staff)
     return course_admin.list_course_submissions(db, course_id)
 
 
@@ -137,14 +158,24 @@ def grade_submission(
     db: Session = Depends(get_db),
     staff: User = Depends(resolve_staff_user),
 ):
-    """GRD-004/TCH-004: ручная корректировка результата с обязательным комментарием."""
+    """GRD-004/TCH-004: ручная корректировка результата с обязательным комментарием.
+    RBAC-002: методисту — только по своим курсам (если курс определить не
+    удалось, проверять нечего — пропускаем, не блокируем легитимную оценку)."""
+    if staff.role == "methodist":
+        course = course_admin.get_course_for_submission(db, submission_id)
+        if course:
+            course_admin.ensure_course_owner(course, staff)
     return apply_manual_grade(db, submission_id, payload.score, payload.comment)
 
 
 @router.get("/courses/{course_id}/analytics", response_model=CourseAnalyticsOut)
 def get_course_analytics(course_id: int, db: Session = Depends(get_db), staff: User = Depends(resolve_staff_user)):
-    """ANA-001/002/005: сводка по курсу и рейтинг задач по сложности."""
+    """ANA-001/002/005: сводка по курсу и рейтинг задач по сложности.
+    RBAC-002: методисту — только по своим курсам."""
     from datetime import datetime, timezone
+
+    if staff.role == "methodist":
+        course_admin.ensure_course_owner(course_admin.get_course_or_404(db, course_id), staff)
 
     return CourseAnalyticsOut(
         generated_at=datetime.now(timezone.utc),

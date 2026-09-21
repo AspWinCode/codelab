@@ -6,6 +6,7 @@
   это основной путь, см. README).
 """
 from datetime import datetime, timezone
+from typing import Optional
 
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
@@ -32,6 +33,52 @@ from app.schemas import (
 )
 from app.services.lms_client import notify_course_webhook
 from app.services.progress_calc import is_item_unlocked, resolve_official_score
+
+
+def get_course_or_404(db: Session, course_id: int) -> Course:
+    course = db.query(Course).filter(Course.id == course_id).first()
+    if not course:
+        raise HTTPException(status_code=404, detail="Курс не найден")
+    return course
+
+
+def ensure_course_owner(course: Course, staff: User) -> None:
+    """RBAC-002: методист получает доступ только к курсам, которые создал
+    сам — не ко всем курсам платформы. Admin — без ограничений; teacher сюда
+    не должен попадать вообще (мутирующие эндпоинты курса на стороне LMS
+    гейтятся codelab.manage, которым обладает только методист)."""
+    if staff.role == "admin":
+        return
+    if course.created_by_id != staff.id:
+        raise HTTPException(status_code=403, detail="Курс создан другим методистом — нет доступа")
+
+
+def get_course_for_submission(db: Session, submission_id: int) -> Optional[Course]:
+    """None, если задача посылки ни к одному курсу не привязана (например,
+    прогон вне дерева) — тогда владельца проверить нечем, пропускаем."""
+    submission = db.query(Submission).filter(Submission.id == submission_id).first()
+    if not submission:
+        return None
+    item = (
+        db.query(LearningItem)
+        .filter(LearningItem.problem_revision_id == submission.problem_revision_id)
+        .first()
+    )
+    if not item:
+        return None
+    version = db.query(CourseVersion).filter(CourseVersion.id == item.course_version_id).first()
+    return db.query(Course).filter(Course.id == version.course_id).first() if version else None
+
+
+def get_course_for_item(db: Session, item_id: int) -> tuple[LearningItem, Course]:
+    item = db.query(LearningItem).filter(LearningItem.id == item_id).first()
+    if not item:
+        raise HTTPException(status_code=404, detail="Элемент не найден")
+    version = db.query(CourseVersion).filter(CourseVersion.id == item.course_version_id).first()
+    course = db.query(Course).filter(Course.id == version.course_id).first() if version else None
+    if not course:
+        raise HTTPException(status_code=404, detail="Курс элемента не найден")
+    return item, course
 
 
 def get_draft_version(db: Session, course_id: int) -> CourseVersion:
