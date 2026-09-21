@@ -1,5 +1,12 @@
-"""IAM-004: users.is_blocked, users.sessions_invalidated_at, users.created_at,
-users.last_login_at, login_events
+"""IAM-004: users.sessions_invalidated_at, login_events
+
+users.is_blocked/created_at/last_login_at НЕ добавляются здесь — они уже
+есть в 25112801a2eb (initial schema): та миграция была написана позже, чем
+в models.py появились эти поля IAM-004, и авто-сгенерировалась уже с ними.
+До этого разрыв был незаметен — все проверки схемы шли через
+Base.metadata.create_all() на чистом SQLite (см. README), а не через
+настоящий `alembic upgrade head` на Postgres; на первом же реальном прогоне
+(деплой на прод, 2026-09-21) это всплыло как DuplicateColumn.
 
 Revision ID: b7c8d9e0f1a2
 Revises: a1b2c3d4e5f6
@@ -17,11 +24,7 @@ depends_on = None
 
 
 def upgrade() -> None:
-    op.add_column('users', sa.Column('is_blocked', sa.Boolean(), nullable=False, server_default=sa.false()))
     op.add_column('users', sa.Column('sessions_invalidated_at', sa.DateTime(timezone=True), nullable=True))
-    op.add_column('users', sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=True))
-    op.add_column('users', sa.Column('last_login_at', sa.DateTime(timezone=True), nullable=True))
-    op.alter_column('users', 'is_blocked', server_default=None)
 
     op.create_table(
         'login_events',
@@ -37,7 +40,4 @@ def upgrade() -> None:
 def downgrade() -> None:
     op.drop_index(op.f('ix_login_events_user_id'), table_name='login_events')
     op.drop_table('login_events')
-    op.drop_column('users', 'last_login_at')
-    op.drop_column('users', 'created_at')
     op.drop_column('users', 'sessions_invalidated_at')
-    op.drop_column('users', 'is_blocked')
