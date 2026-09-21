@@ -16,6 +16,7 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models import Course, LearningItem, User
 from app.schemas import (
+    AdminSystemStatusOut,
     CourseAnalyticsOut,
     CourseCreate,
     CourseOut,
@@ -32,7 +33,7 @@ from app.schemas import (
     SubmissionReviewOut,
 )
 from app.security import verify_lms_signature
-from app.services import analytics, course_admin
+from app.services import admin_status, analytics, course_admin
 from app.services.progress_calc import apply_manual_grade
 
 router = APIRouter()
@@ -210,3 +211,13 @@ def get_course_analytics(course_id: int, db: Session = Depends(get_db), staff: U
         overview=analytics.course_overview(db, course_id),
         tasks=analytics.task_difficulty(db, course_id),
     )
+
+
+@router.get("/admin/status", response_model=AdminSystemStatusOut)
+def get_system_status(db: Session = Depends(get_db), staff: User = Depends(resolve_staff_user)):
+    """ADM-004: очередь, признаки живости воркера, недавние системные
+    ошибки, ёмкость хранилища. Только администратор — не методист/преподаватель,
+    это эксплуатационная, а не учебная информация."""
+    if staff.role != "admin":
+        raise HTTPException(status_code=403, detail="Доступно только администратору")
+    return admin_status.get_system_status(db)

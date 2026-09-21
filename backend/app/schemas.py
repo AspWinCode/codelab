@@ -284,3 +284,29 @@ class NotificationPreferenceOut(BaseModel):
 
 class NotificationPreferenceUpdate(BaseModel):
     enabled: bool
+
+
+class AdminQueueStatus(BaseModel):
+    queued_count: int
+    running_count: int
+    oldest_queued_age_seconds: Optional[int]
+    worker_likely_stalled: bool
+
+
+class AdminErrorStatus(BaseModel):
+    system_errors_last_24h: int
+
+
+class AdminStorageStatus(BaseModel):
+    uploads_size_bytes: int
+    disk_free_bytes: int
+    disk_total_bytes: int
+
+
+class AdminSystemStatusOut(BaseModel):
+    """ADM-004."""
+
+    generated_at: datetime
+    queue: AdminQueueStatus
+    errors: AdminErrorStatus
+    storage: AdminStorageStatus
