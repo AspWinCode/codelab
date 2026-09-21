@@ -1,8 +1,7 @@
-import DOMPurify from 'dompurify';
-import { marked } from 'marked';
 import { useEffect, useRef, useState } from 'react';
 import { useParams, useSearchParams } from 'react-router-dom';
 import { api, LearningItemTree, RunResult, Submission } from '../api';
+import { renderContentHtml } from '../utils/renderContent';
 
 const POLL_INTERVAL_MS = 1000;
 const TERMINAL_STATUSES = new Set(['done', 'cancelled', 'system_error']);
@@ -141,7 +140,7 @@ export default function CoursePage() {
             <h2>{selected.title}</h2>
             <div
               className="preview"
-              dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(marked.parse(selected.content || selected.description || '') as string) }}
+              dangerouslySetInnerHTML={{ __html: renderContentHtml(selected.content || selected.description || '') }}
             />
           </div>
         )}

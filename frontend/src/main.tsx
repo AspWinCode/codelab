@@ -5,6 +5,10 @@ import App from './App';
 import CoursePage from './pages/CoursePage';
 import ItemEditorPage from './pages/ItemEditorPage';
 import './styles.css';
+// EDT-005: подсветка кода и рендер LaTeX-формул в предпросмотре — стили
+// самих библиотек, не зависят от темы приложения.
+import 'highlight.js/styles/github.css';
+import 'katex/dist/katex.min.css';
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>

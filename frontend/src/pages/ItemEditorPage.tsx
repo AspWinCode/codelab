@@ -1,8 +1,7 @@
-import DOMPurify from 'dompurify';
-import { marked } from 'marked';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { api, LearningItem } from '../api';
+import { renderContentHtml } from '../utils/renderContent';
 
 const AUTOSAVE_INTERVAL_MS = 15_000; // EDT-006: не реже раза в 15 секунд
 
@@ -10,12 +9,13 @@ const AUTOSAVE_INTERVAL_MS = 15_000; // EDT-006: не реже раза в 15 с
  * WYSIWYG (заголовки/списки/цитаты/таблицы/ссылки/код — обычный синтаксис
  * Markdown, EDT-001 частично), вставка изображений через буфер обмена и
  * drag-drop с загрузкой на сервер (EDT-002), автосохранение (EDT-006),
- * предпросмотр как ученик переключением вкладки (EDT-007).
+ * предпросмотр как ученик переключением вкладки (EDT-007), подсветка
+ * синтаксиса кода и рендер LaTeX-формул `$...$`/`$$...$$` в предпросмотре
+ * (EDT-005, с 2026-09-21), вставка видео через `[[video: ссылка]]` с
+ * allowlist доменов — YouTube/VK Видео/RuTube (EDT-004, с 2026-09-21).
  *
- * Не реализовано: точная настройка alt/подписи/размера изображения (EDT-003),
- * видео через embed-ссылки с allowlist доменов (EDT-004), подсветка
- * синтаксиса кода и рендер LaTeX-формул в предпросмотре (EDT-005) —
- * см. README. */
+ * Не реализовано: точная настройка alt/подписи/размера изображения и полный
+ * WYSIWYG вместо Markdown-разметки (EDT-003) — см. README. */
 export default function ItemEditorPage() {
   const { itemId } = useParams();
   const [item, setItem] = useState<LearningItem | null>(null);
@@ -111,6 +111,19 @@ export default function ItemEditorPage() {
     e.target.value = '';
   };
 
+  // EDT-004: ссылка на YouTube/VK Видео/RuTube — рендерится плеером в
+  // предпросмотре, ссылка с другого домена — плейсхолдером-предупреждением
+  // (см. utils/videoEmbed.ts, utils/renderContent.ts).
+  const insertVideo = () => {
+    // eslint-disable-next-line no-alert
+    const url = window.prompt('Ссылка на видео (YouTube, VK Видео или RuTube):');
+    if (url) insertAtCursor(`\n[[video: ${url.trim()}]]\n`);
+  };
+
+  const insertFormula = (display: boolean) => {
+    insertAtCursor(display ? '\n$$\nE = mc^2\n$$\n' : '$x^2$');
+  };
+
   if (loadError) return <div className="page error">{loadError}</div>;
   if (!item) return <div className="page">Загрузка…</div>;
 
@@ -130,6 +143,9 @@ export default function ItemEditorPage() {
           Вставить файл
           <input type="file" onChange={handleFilePick} style={{ display: 'none' }} />
         </label>
+        <button type="button" onClick={insertVideo}>Вставить видео</button>
+        <button type="button" onClick={() => insertFormula(false)}>Формула (инлайн)</button>
+        <button type="button" onClick={() => insertFormula(true)}>Формула (блок)</button>
       </div>
 
       {mode === 'edit' ? (
@@ -149,7 +165,7 @@ export default function ItemEditorPage() {
         // SEC-006/SEC-007: marked пропускает сырой HTML из исходного текста как есть —
         // без санации методист (случайно или намеренно) мог бы вставить <script>,
         // который потом выполнится в браузере ученика.
-        <div className="preview" dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(marked.parse(content) as string) }} />
+        <div className="preview" dangerouslySetInnerHTML={{ __html: renderContentHtml(content) }} />
       )}
 
       {uploadError && <p className="error">{uploadError}</p>}
