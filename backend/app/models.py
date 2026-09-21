@@ -209,6 +209,9 @@ class Enrollment(Base):
     ends_at = Column(DateTime(timezone=True), nullable=True)
     # STU-005: последняя открытая позиция в материале — "продолжить обучение".
     last_item_id = Column(Integer, ForeignKey("learning_items.id"), nullable=True)
+    # NTF-001: чтобы не слать напоминание о дедлайне повторно на каждый прогон
+    # проверки (см. app/notify_deadlines.py).
+    deadline_notified_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     user = relationship("User", back_populates="enrollments")
@@ -290,3 +293,47 @@ class AuditEvent(Base):
     result = Column(String(16), nullable=False, default="ok")
     meta = Column(JSON, nullable=False, default=dict)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class NotificationType(str, enum.Enum):
+    """NTF-001: назначение курса и результат ручной проверки — обязательные
+    (нельзя отключить, NTF-003); приближение дедлайна — необязательное."""
+
+    COURSE_ASSIGNED = "course_assigned"
+    DEADLINE_APPROACHING = "deadline_approaching"
+    MANUAL_REVIEW_RESULT = "manual_review_result"
+
+
+MANDATORY_NOTIFICATION_TYPES = {NotificationType.COURSE_ASSIGNED, NotificationType.MANUAL_REVIEW_RESULT}
+
+
+class Notification(Base):
+    """NTF-001: внутренние уведомления. Email/push/мессенджеры (NTF-002) как
+    каналы доставки не реализованы — см. README."""
+
+    __tablename__ = "notifications"
+
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    type = Column(SQLEnum(NotificationType), nullable=False)
+    title = Column(String(255), nullable=False)
+    body = Column(Text, nullable=True)
+    is_read = Column(Boolean, nullable=False, default=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    user = relationship("User")
+
+
+class NotificationPreference(Base):
+    """NTF-003: пользователь управляет только необязательными типами —
+    обязательные (MANDATORY_NOTIFICATION_TYPES) игнорируют этот флаг."""
+
+    __tablename__ = "notification_preferences"
+    __table_args__ = (UniqueConstraint("user_id", "type", name="uq_user_notification_type"),)
+
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    type = Column(SQLEnum(NotificationType), nullable=False)
+    enabled = Column(Boolean, nullable=False, default=True)
+
+    user = relationship("User")

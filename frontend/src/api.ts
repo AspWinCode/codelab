@@ -106,6 +106,22 @@ export interface Dashboard {
   recent_results: RecentResult[];
 }
 
+// NTF-001/003
+export interface Notification {
+  id: number;
+  type: string;
+  title: string;
+  body: string | null;
+  is_read: boolean;
+  created_at: string;
+}
+
+export interface NotificationPreference {
+  type: string;
+  enabled: boolean;
+  mandatory: boolean;
+}
+
 export const api = {
   me: () => request<Me>('/auth/me'),
   courses: () => request<Course[]>('/courses'),
@@ -139,4 +155,11 @@ export const api = {
       body: JSON.stringify({ problem_revision_id, code }),
     }),
   getSubmission: (id: number) => request<Submission>(`/submissions/${id}`),
+
+  notifications: (unreadOnly = false) =>
+    request<Notification[]>(`/me/notifications${unreadOnly ? '?unread_only=true' : ''}`),
+  markNotificationRead: (id: number) => request(`/me/notifications/${id}/read`, { method: 'PUT' }),
+  notificationPreferences: () => request<NotificationPreference[]>('/me/notification-preferences'),
+  updateNotificationPreference: (type: string, enabled: boolean) =>
+    request(`/me/notification-preferences/${type}`, { method: 'PUT', body: JSON.stringify({ enabled }) }),
 };

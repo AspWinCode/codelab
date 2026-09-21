@@ -5,9 +5,10 @@ from sqlalchemy.orm import Session
 from app.config import settings
 from app.database import get_db
 from app.deps import get_current_user
-from app.models import AuditEvent, Course, Enrollment, EnrollmentStatus, User
+from app.models import AuditEvent, Course, Enrollment, EnrollmentStatus, NotificationType, User
 from app.schemas import MeOut
 from app.security import create_local_session_token, verify_lms_sso_token
+from app.services.notifications import notify
 
 router = APIRouter()
 
@@ -41,6 +42,7 @@ def sso_login(response: Response, token: str = Query(...), course: int | None = 
     if user.is_blocked:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Аккаунт заблокирован")
 
+    newly_enrolled_course_title = None
     if course is not None:
         enrollment = (
             db.query(Enrollment)
@@ -58,6 +60,7 @@ def sso_login(response: Response, token: str = Query(...), course: int | None = 
                     status=EnrollmentStatus.ACTIVE,
                     source="lms",
                 ))
+                newly_enrolled_course_title = course_obj.title
         elif enrollment.status == EnrollmentStatus.REVOKED:
             enrollment.status = EnrollmentStatus.ACTIVE
 
@@ -69,6 +72,11 @@ def sso_login(response: Response, token: str = Query(...), course: int | None = 
         meta={"new_account": is_new, "course": course},
     ))
     db.commit()
+
+    if newly_enrolled_course_title:
+        # NTF-001: уведомление о назначении курса — на случай, если ученик
+        # оказался зачислен именно здесь (без предварительного enroll() от LMS).
+        notify(db, user.id, NotificationType.COURSE_ASSIGNED, f"Вам назначен курс «{newly_enrolled_course_title}»")
 
     session_token = create_local_session_token(user.id)
     response = Response(status_code=status.HTTP_302_FOUND)

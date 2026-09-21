@@ -5,8 +5,9 @@ from sqlalchemy.orm import Session
 from fastapi import Depends
 
 from app.database import get_db
-from app.models import Course, Enrollment, EnrollmentStatus, User
+from app.models import Course, Enrollment, EnrollmentStatus, NotificationType, User
 from app.security import verify_lms_signature
+from app.services.notifications import notify
 from app.services.progress import compute_progress_for_lms
 
 router = APIRouter()
@@ -62,6 +63,7 @@ def enroll(
         .filter(Enrollment.user_id == user.id, Enrollment.course_id == course_id)
         .first()
     )
+    is_new_or_reactivated = not enrollment or enrollment.status == EnrollmentStatus.REVOKED
     if enrollment:
         enrollment.status = EnrollmentStatus.ACTIVE
         enrollment.course_version_id = course.active_version_id
@@ -75,6 +77,11 @@ def enroll(
             source="lms",
         ))
     db.commit()
+
+    if is_new_or_reactivated:
+        # NTF-001: уведомление о назначении курса.
+        notify(db, user.id, NotificationType.COURSE_ASSIGNED, f"Вам назначен курс «{course.title}»")
+
     return {"ok": True}
 
 

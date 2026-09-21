@@ -263,3 +263,24 @@ class MeOut(BaseModel):
     directions: List[str]
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class NotificationOut(BaseModel):
+    id: int
+    type: str
+    title: str
+    body: Optional[str]
+    is_read: bool
+    created_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class NotificationPreferenceOut(BaseModel):
+    type: str
+    enabled: bool
+    mandatory: bool  # NTF-003: обязательные показываются, но недоступны для выключения
+
+
+class NotificationPreferenceUpdate(BaseModel):
+    enabled: bool

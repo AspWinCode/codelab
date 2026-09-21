@@ -1,8 +1,66 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { api, Course, Dashboard, Me } from './api';
+import { api, Course, Dashboard, Me, Notification, NotificationPreference } from './api';
 
 const formatDeadline = (iso: string) => new Date(iso).toLocaleDateString('ru-RU');
+
+/** NTF-001/003: колокольчик уведомлений + настройка необязательных типов. */
+function NotificationsPanel() {
+  const [notifications, setNotifications] = useState<Notification[]>([]);
+  const [prefs, setPrefs] = useState<NotificationPreference[]>([]);
+  const [open, setOpen] = useState(false);
+
+  const load = () => {
+    api.notifications().then(setNotifications).catch(() => {});
+    api.notificationPreferences().then(setPrefs).catch(() => {});
+  };
+
+  useEffect(() => { load(); }, []);
+
+  const unreadCount = notifications.filter((n) => !n.is_read).length;
+
+  const markRead = async (id: number) => {
+    await api.markNotificationRead(id).catch(() => {});
+    setNotifications((prev) => prev.map((n) => (n.id === id ? { ...n, is_read: true } : n)));
+  };
+
+  const togglePref = async (type: string, enabled: boolean) => {
+    await api.updateNotificationPreference(type, enabled).catch(() => {});
+    setPrefs((prev) => prev.map((p) => (p.type === type ? { ...p, enabled } : p)));
+  };
+
+  return (
+    <div style={{ marginBottom: 16 }}>
+      <button onClick={() => setOpen((o) => !o)}>
+        🔔 Уведомления{unreadCount > 0 ? ` (${unreadCount})` : ''}
+      </button>
+      {open && (
+        <div className="output" style={{ marginTop: 8 }}>
+          {notifications.length === 0 && <p>Уведомлений пока нет.</p>}
+          {notifications.map((n) => (
+            <div
+              key={n.id}
+              style={{ padding: '6px 0', borderBottom: '1px solid #333', opacity: n.is_read ? 0.6 : 1, cursor: n.is_read ? 'default' : 'pointer' }}
+              onClick={() => !n.is_read && markRead(n.id)}
+            >
+              <strong>{n.title}</strong>
+              {n.body && <div style={{ fontSize: '0.9em' }}>{n.body}</div>}
+              <div style={{ fontSize: '0.8em', color: '#9ca3af' }}>{new Date(n.created_at).toLocaleString('ru-RU')}</div>
+            </div>
+          ))}
+          <div style={{ marginTop: 12, fontSize: '0.85em' }}>
+            {prefs.filter((p) => !p.mandatory).map((p) => (
+              <label key={p.type} style={{ display: 'block', marginTop: 4 }}>
+                <input type="checkbox" checked={p.enabled} onChange={(e) => togglePref(p.type, e.target.checked)} />
+                {' '}Напоминание о дедлайне
+              </label>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
 
 /** STU-001: главная страница ученика — активные курсы, процент прохождения,
  * ближайшие дедлайны, последние результаты, следующий рекомендуемый шаг.
@@ -41,6 +99,7 @@ export default function App() {
           {me.groups.length > 0 ? ` · ${me.groups.join(', ')}` : ''}
         </p>
       )}
+      {me && <NotificationsPanel />}
 
       {me?.role === 'student' ? (
         <>

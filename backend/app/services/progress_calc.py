@@ -15,12 +15,14 @@ from app.models import (
     Enrollment,
     LearningItem,
     LearningItemType,
+    NotificationType,
     ProblemRevision,
     Progress,
     Submission,
     SubmissionStatus,
     Verdict,
 )
+from app.services.notifications import notify
 
 
 def _effective_score(submission: Submission) -> float:
@@ -155,4 +157,19 @@ def apply_manual_grade(db: Session, submission_id: int, score: float, comment: s
     db.refresh(submission)
 
     recompute_progress_for_submission(db, submission)  # GRD-005
+
+    # NTF-001: результат ручной проверки + комментарий преподавателя — одно
+    # уведомление, комментарий у нас всегда идёт вместе с оценкой.
+    item = (
+        db.query(LearningItem)
+        .filter(LearningItem.problem_revision_id == submission.problem_revision_id)
+        .first()
+    )
+    task_title = item.title if item else f"задача {submission.problem_revision_id}"
+    notify(
+        db, submission.user_id, NotificationType.MANUAL_REVIEW_RESULT,
+        f"Проверена работа: {task_title}",
+        body=f"Балл: {score}. {comment}",
+    )
+
     return submission
