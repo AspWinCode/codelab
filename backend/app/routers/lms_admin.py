@@ -151,20 +151,29 @@ def list_course_submissions(course_id: int, db: Session = Depends(get_db), staff
     return course_admin.list_course_submissions(db, course_id)
 
 
-@router.put("/submissions/{submission_id}/grade", response_model=SubmissionOut)
+@router.put("/courses/{course_id}/submissions/{submission_id}/grade", response_model=SubmissionOut)
 def grade_submission(
+    course_id: int,
     submission_id: int,
     payload: ManualGradeIn,
     db: Session = Depends(get_db),
     staff: User = Depends(resolve_staff_user),
 ):
-    """GRD-004/TCH-004: ручная корректировка результата с обязательным комментарием.
-    RBAC-002: методисту — только по своим курсам (если курс определить не
-    удалось, проверять нечего — пропускаем, не блокируем легитимную оценку)."""
+    """GRD-004/TCH-004: ручная корректировка результата с обязательным
+    комментарием. course_id в пути — не только для методиста (RBAC-002:
+    только свои курсы), но и чтобы LMS могла ДО вызова дёшево проверить, что
+    посылка относится именно к тому курсу/группе, к которым у вызывающего
+    тренера есть доступ (см. codelab.py в learning-portal-main) — раньше
+    эндпоинт принимал только submission_id, и такую проверку сделать было
+    нечем."""
+    course = course_admin.get_course_or_404(db, course_id)
     if staff.role == "methodist":
-        course = course_admin.get_course_for_submission(db, submission_id)
-        if course:
-            course_admin.ensure_course_owner(course, staff)
+        course_admin.ensure_course_owner(course, staff)
+
+    actual_course = course_admin.get_course_for_submission(db, submission_id)
+    if actual_course and actual_course.id != course_id:
+        raise HTTPException(status_code=404, detail="Посылка не относится к указанному курсу")
+
     return apply_manual_grade(db, submission_id, payload.score, payload.comment)
 
 

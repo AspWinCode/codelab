@@ -110,7 +110,7 @@ def test_list_and_grade_submissions(client, db_session):
     assert body[0]["code"] == "print(1)"
 
     grade_resp = client.put(
-        f"/api/lms-admin/submissions/{sub.id}/grade?{qs}",
+        f"/api/lms-admin/courses/{course.id}/submissions/{sub.id}/grade?{qs}",
         json={"score": 90.0, "comment": "Работает, но неаккуратно"},
         headers={"X-LP-Signature": sig},
     )
@@ -122,6 +122,9 @@ def test_grade_requires_comment(client, db_session):
     sig = _sig("lp-user-2")
     qs = _staff_qs(external_ref="lp-user-2", full_name="Пётр Тренер", role="teacher")
 
+    course = Course(title="C")
+    db_session.add(course)
+    db_session.flush()
     problem = ProblemRevision(task_id=1, revision_number=1, title="T")
     db_session.add(problem)
     db_session.flush()
@@ -133,8 +136,45 @@ def test_grade_requires_comment(client, db_session):
     db_session.commit()
 
     resp = client.put(
-        f"/api/lms-admin/submissions/{sub.id}/grade?{qs}",
+        f"/api/lms-admin/courses/{course.id}/submissions/{sub.id}/grade?{qs}",
         json={"score": 50.0, "comment": "   "},
         headers={"X-LP-Signature": sig},
     )
     assert resp.status_code == 422
+
+
+def test_grade_rejects_submission_from_other_course(client, db_session):
+    """course_id в пути — LMS должна мочь проверить, что посылка правда из
+    заявленного курса, прежде чем разрешать оценку (закрывает пробел, из-за
+    которого раньше эндпоинт не принимал course_id вообще)."""
+    sig = _sig("lp-user-2")
+    qs = _staff_qs(external_ref="lp-user-2", full_name="Пётр Тренер", role="teacher")
+
+    course_a = Course(title="A")
+    course_b = Course(title="B")
+    db_session.add_all([course_a, course_b])
+    db_session.flush()
+    version_a = CourseVersion(course_id=course_a.id, version_number=1)
+    db_session.add(version_a)
+    db_session.flush()
+
+    problem = ProblemRevision(task_id=1, revision_number=1, title="T")
+    db_session.add(problem)
+    db_session.flush()
+    item = LearningItem(course_version_id=version_a.id, type=LearningItemType.TASK, title="Задача", problem_revision_id=problem.id)
+    db_session.add(item)
+
+    student = User(external_ref="lp-student-1", full_name="Ученик", role="student")
+    db_session.add(student)
+    db_session.flush()
+    sub = Submission(user_id=student.id, problem_revision_id=problem.id, code="x", status=SubmissionStatus.DONE, score=10.0)
+    db_session.add(sub)
+    db_session.commit()
+
+    # Посылка реально из course_a, но запрос утверждает, что из course_b.
+    resp = client.put(
+        f"/api/lms-admin/courses/{course_b.id}/submissions/{sub.id}/grade?{qs}",
+        json={"score": 50.0, "comment": "test"},
+        headers={"X-LP-Signature": sig},
+    )
+    assert resp.status_code == 404
