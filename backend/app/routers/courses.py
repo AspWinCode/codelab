@@ -20,6 +20,8 @@ from app.schemas import (
     LearningItemUpdate,
     ProblemRevisionCreate,
     ProblemRevisionOut,
+    RerunSubmissionsIn,
+    RerunSubmissionsOut,
 )
 from app.services import course_admin
 
@@ -150,3 +152,16 @@ async def publish_course(course_id: int, db: Session = Depends(get_db), user: Us
 async def unpublish_course(course_id: int, db: Session = Depends(get_db), user: User = Depends(require_role("methodist", "admin"))):
     course_admin.ensure_course_owner(course_admin.get_course_or_404(db, course_id), user)
     return await course_admin.unpublish_course(db, course_id, actor_id=user.id)
+
+
+@router.post("/{course_id}/submissions/rerun", response_model=RerunSubmissionsOut)
+def rerun_submissions(
+    course_id: int,
+    payload: RerunSubmissionsIn,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_role("methodist", "admin")),
+):
+    """TASK-007: массовая перепроверка после исправления тестов задачи."""
+    course_admin.ensure_course_owner(course_admin.get_course_or_404(db, course_id), user)
+    requeued = course_admin.rerun_submissions(db, course_id, payload.submission_ids)
+    return RerunSubmissionsOut(requeued=requeued)

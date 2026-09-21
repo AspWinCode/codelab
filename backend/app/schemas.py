@@ -230,6 +230,16 @@ class ManualGradeIn(BaseModel):
     comment: str
 
 
+class RerunSubmissionsIn(BaseModel):
+    """TASK-007: массовая перепроверка выбранных посылок."""
+
+    submission_ids: List[int]
+
+
+class RerunSubmissionsOut(BaseModel):
+    requeued: int
+
+
 class RunRequest(BaseModel):
     """IDE-003: запуск на пользовательском вводе без создания оцениваемой посылки."""
 

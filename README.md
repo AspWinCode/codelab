@@ -30,7 +30,9 @@
   `SELECT ... FOR UPDATE SKIP LOCKED` в Postgres — несколько воркеров не возьмут одну и ту
   же посылку дважды, горизонтальное масштабирование = больше процессов воркера; повтор
   безопасных технических ошибок с backoff, приоритеты (`Submission.priority`), массовая
-  перепроверка `POST /submissions/rerun` (TASK-007). Очередь — таблица в общей Postgres,
+  перепроверка `POST /courses/{id}/submissions/rerun` (TASK-007, с 2026-09-21 доступна и
+  через `/api/lms-admin/...` — методисту, не тренеру, это авторское действие над задачей;
+  учитывает только посылки, чьи задачи реально принадлежат курсу). Очередь — таблица в общей Postgres,
   а не отдельный брокер (Redis/RabbitMQ) — проще для MVP, но при очень высокой частоте
   отправок Postgres станет узким местом раньше выделенной очереди;
 - зачисление фиксирует точную версию курса на момент выдачи (`Enrollment.course_version_id`,
@@ -139,7 +141,8 @@ API — `/api/lms-admin/*` (`app/routers/lms_admin.py`), вызываемый б
 | `GET /api/lms-admin/courses/{id}/tree` | черновик курса (рабочая версия методиста) |
 | `POST /api/lms-admin/courses/{id}/publish`, `.../unpublish` | публикация версии |
 | `GET /api/lms-admin/courses/{id}/submissions` | посылки учеников по курсу (TCH-001/003) |
-| `PUT /api/lms-admin/submissions/{id}/grade` | ручная корректировка (GRD-004/TCH-004) |
+| `PUT /api/lms-admin/courses/{id}/submissions/{sub_id}/grade` | ручная корректировка (GRD-004/TCH-004) |
+| `POST /api/lms-admin/courses/{id}/submissions/rerun` | массовая перепроверка (TASK-007) |
 | `GET /api/lms-admin/courses/{id}/analytics` | агрегаты курса + рейтинг задач по сложности (ANA-001/002/005) |
 
 Каждый запрос несёт `staff_external_ref`/`staff_full_name`/`staff_role`

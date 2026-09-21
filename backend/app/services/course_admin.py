@@ -20,6 +20,7 @@ from app.models import (
     LearningItemType,
     ProblemRevision,
     Submission,
+    SubmissionStatus,
     User,
 )
 from app.schemas import (
@@ -295,6 +296,38 @@ async def publish_course(db: Session, course_id: int, actor_id: int | None) -> C
 
     await notify_course_webhook(course, "published")
     return course
+
+
+def rerun_submissions(db: Session, course_id: int, submission_ids: list[int]) -> int:
+    """TASK-007: массовая перепроверка после исправления тестов задачи.
+    Учитываются только посылки, чьи задачи реально принадлежат этому курсу
+    (любой версии) — не позволяет переставить в очередь чужие посылки,
+    даже если их id угадать."""
+    version_ids = [v.id for v in db.query(CourseVersion).filter(CourseVersion.course_id == course_id)]
+    problem_ids = {
+        i.problem_revision_id
+        for i in db.query(LearningItem).filter(
+            LearningItem.course_version_id.in_(version_ids), LearningItem.type == LearningItemType.TASK
+        )
+        if i.problem_revision_id
+    }
+    if not problem_ids:
+        return 0
+
+    submissions = (
+        db.query(Submission)
+        .filter(Submission.id.in_(submission_ids), Submission.problem_revision_id.in_(problem_ids))
+        .all()
+    )
+    for s in submissions:
+        s.status = SubmissionStatus.QUEUED
+        s.priority = 10
+        s.verdict = None
+        s.score = None
+        s.stdout = None
+        s.stderr = None
+    db.commit()
+    return len(submissions)
 
 
 def list_course_submissions(db: Session, course_id: int) -> list[SubmissionReviewOut]:

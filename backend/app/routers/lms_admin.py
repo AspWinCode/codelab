@@ -26,6 +26,8 @@ from app.schemas import (
     ManualGradeIn,
     ProblemRevisionCreate,
     ProblemRevisionOut,
+    RerunSubmissionsIn,
+    RerunSubmissionsOut,
     SubmissionOut,
     SubmissionReviewOut,
 )
@@ -175,6 +177,23 @@ def grade_submission(
         raise HTTPException(status_code=404, detail="Посылка не относится к указанному курсу")
 
     return apply_manual_grade(db, submission_id, payload.score, payload.comment)
+
+
+@router.post("/courses/{course_id}/submissions/rerun", response_model=RerunSubmissionsOut)
+def rerun_submissions(
+    course_id: int,
+    payload: RerunSubmissionsIn,
+    db: Session = Depends(get_db),
+    staff: User = Depends(resolve_staff_user),
+):
+    """TASK-007: массовая перепроверка после исправления тестов задачи.
+    RBAC-002: методисту — только по своим курсам; в очередь встают только
+    те посылки из переданного списка, чьи задачи реально принадлежат этому
+    курсу (нельзя перезапустить чужую посылку, угадав id)."""
+    if staff.role == "methodist":
+        course_admin.ensure_course_owner(course_admin.get_course_or_404(db, course_id), staff)
+    requeued = course_admin.rerun_submissions(db, course_id, payload.submission_ids)
+    return RerunSubmissionsOut(requeued=requeued)
 
 
 @router.get("/courses/{course_id}/analytics", response_model=CourseAnalyticsOut)

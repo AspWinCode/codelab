@@ -97,22 +97,3 @@ def manual_grade(
     return apply_manual_grade(db, submission_id, payload.score, payload.comment)
 
 
-@router.post("/rerun")
-def rerun_submissions(
-    submission_ids: list[int],
-    db: Session = Depends(get_db),
-    user: User = Depends(require_role("methodist", "admin")),
-):
-    """TASK-007: массовая перепроверка выбранных посылок (например, после
-    исправления тестов задачи) — переставляет их обратно в очередь с
-    повышенным приоритетом, чтобы не ждать за обычными посылками."""
-    submissions = db.query(Submission).filter(Submission.id.in_(submission_ids)).all()
-    for s in submissions:
-        s.status = SubmissionStatus.QUEUED
-        s.priority = 10
-        s.verdict = None
-        s.score = None
-        s.stdout = None
-        s.stderr = None
-    db.commit()
-    return {"requeued": len(submissions)}
