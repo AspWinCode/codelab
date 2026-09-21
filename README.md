@@ -253,3 +253,33 @@ npm run dev
 Если Docker на машине не установлен, для локальной разработки (без проверки
 недоверенного кода!) можно временно поставить `RUNNER_BACKEND=subprocess` в `.env` —
 код тогда выполняется без всякой изоляции, см. предупреждение в `runner_subprocess.py`.
+
+## Прод-развёртывание
+
+По образцу kodex/pixelforge на том же хосте: наружу отдаёт **nginx хоста**
+(TLS от certbot, `codelab.tirskix.space`), контейнеры слушают только
+`127.0.0.1`. `docker-compose.yml` (корень репозитория) поднимает четыре
+сервиса — `db`, `backend` (API + `alembic upgrade head` при каждом старте,
+`backend/entrypoint.sh`), `worker` (`python -m app.worker`, `RUNNER_BACKEND=docker`,
+монтирует `/var/run/docker.sock` хоста — сам Judge исполняет решения в
+ОТДЕЛЬНЫХ одноразовых контейнерах, не в себе, см. `app/services/runner_docker.py`),
+`frontend` (статика + nginx-проксирование `/api/` и `/uploads/` на backend,
+`frontend/nginx.conf`).
+
+Секреты — `/root/codelab/.env` на хосте, не в репозитории (`.env.prod.example` —
+список переменных). `SSO_KODEX_SHARED_SECRET` должен быть **тем же значением**,
+что в `learning-portal-main/.env` на проде — иначе HMAC-подписи между
+системами не совпадут.
+
+Деплой = `git push origin main`, дальше как у learning-portal: cron
+`* * * * * /root/codelab/deploy/autodeploy.sh` тянет `origin/main`, при
+изменении пересобирает и поднимает контейнеры (`compose up -d --build`),
+самолечит упавшие на каждом тике, когда изменений нет (см. deploy-workflow
+в памяти проекта — тот же паттерн).
+
+Образы `codelab-runner:*` (реестр окружений, ADM-001/002/003) собираются на
+хосте отдельно, не через `docker-compose.yml`: `docker build -t
+codelab-runner:python3.12 backend/sandbox`, аналогично для `python3-data`,
+`cpp17`, `sql-sqlite`, `arcade` (путь `backend/sandbox/<env>/Dockerfile`) —
+пересборка образа с задачами воркера не связана, руками при обновлении
+окружения.

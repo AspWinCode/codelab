@@ -1,16 +1,79 @@
-version: "3.9"
+name: codelab
+
+# Прод-развёртывание Codelab (аналог kodex/pixelforge на этом хосте) — наружу
+# отдаёт nginx хоста на codelab.tirskix.space, сюда смотрит только 127.0.0.1.
+#
+# worker подключает docker.sock хоста — сам Judge исполняет решения учеников
+# в ОТДЕЛЬНЫХ одноразовых контейнерах через `docker run` (app/services/
+# runner_docker.py, JDG-002/003, SEC-004), не в себе; воркеру для этого нужен
+# доступ к докер-демону хоста, а не к себе как к контейнеру.
 
 services:
   db:
     image: postgres:16-alpine
     environment:
       POSTGRES_USER: codelab
-      POSTGRES_PASSWORD: codelab
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_DB: codelab
-    ports:
-      - "5433:5432"
     volumes:
       - codelab_db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U codelab"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    ports:
+      - "127.0.0.1:8210:8000"
+    environment:
+      DATABASE_URL: postgresql://codelab:${POSTGRES_PASSWORD}@db:5432/codelab
+      SECRET_KEY: ${SECRET_KEY}
+      SSO_KODEX_SHARED_SECRET: ${SSO_KODEX_SHARED_SECRET}
+      FRONTEND_BASE_URL: ${FRONTEND_BASE_URL}
+      RUNNER_BACKEND: subprocess  # backend только отдаёт API — судит только worker
+    volumes:
+      - codelab_uploads:/app/uploads
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+
+  worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    command: ["python", "-m", "app.worker"]
+    environment:
+      DATABASE_URL: postgresql://codelab:${POSTGRES_PASSWORD}@db:5432/codelab
+      SECRET_KEY: ${SECRET_KEY}
+      SSO_KODEX_SHARED_SECRET: ${SSO_KODEX_SHARED_SECRET}
+      FRONTEND_BASE_URL: ${FRONTEND_BASE_URL}
+      RUNNER_BACKEND: docker
+      SKIP_MIGRATIONS: "1"  # backend уже прогнал alembic upgrade head при старте
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    depends_on:
+      db:
+        condition: service_healthy
+      backend:
+        condition: service_started
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    ports:
+      - "127.0.0.1:8211:3000"
+    depends_on:
+      - backend
+    restart: unless-stopped
 
 volumes:
   codelab_db_data:
+  codelab_uploads:
