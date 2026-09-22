@@ -92,16 +92,25 @@ class CourseOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class SnapStep(BaseModel):
+    """Один этап Snap!-задания — панель Snap! в нём не участвует, она одна
+    и статична на весь элемент, листаются только текст слева."""
+
+    title: str
+    content: str = ""
+
+
 class LearningItemCreate(BaseModel):
     """LMS-001..004: элемент дерева курса. Для type="task" обязателен
     problem_revision_id — сама задача создаётся отдельно, POST /courses/{id}/tasks.
+    Для type="snap_task" — steps (непустой список этапов).
 
     4 структурных типа — module/submodule/topic/subtopic — образуют жёсткую
     иерархию (каждый только внутри непосредственного родителя, см.
     app/services/tree_rules.py); остальные типы — контент, может лежать на
     любом из этих уровней или в корне курса."""
 
-    type: str  # theory|video|file|link|quiz|task|manual|checkpoint|module|submodule|topic|subtopic
+    type: str  # theory|video|file|link|quiz|task|manual|checkpoint|snap_task|module|submodule|topic|subtopic
     title: str
     description: Optional[str] = None
     content: Optional[str] = None
@@ -111,6 +120,7 @@ class LearningItemCreate(BaseModel):
     position: int = 0
     unlock_rules: dict = {}
     problem_revision_id: Optional[int] = None
+    steps: Optional[List[SnapStep]] = None
 
 
 class LearningItemUpdate(BaseModel):
@@ -122,6 +132,7 @@ class LearningItemUpdate(BaseModel):
     weight: Optional[float] = None
     position: Optional[int] = None
     unlock_rules: Optional[dict] = None
+    steps: Optional[List[SnapStep]] = None
 
 
 class LearningItemOut(BaseModel):
@@ -137,6 +148,7 @@ class LearningItemOut(BaseModel):
     unlock_rules: dict
     problem_revision_id: Optional[int]
     is_archived: bool = False
+    steps: Optional[List[SnapStep]] = None
 
     model_config = ConfigDict(from_attributes=True)
 

@@ -50,6 +50,11 @@ export interface Submission {
   created_at: string;
 }
 
+export interface SnapStep {
+  title: string;
+  content: string;
+}
+
 export interface LearningItem {
   id: number;
   type: string;
@@ -62,6 +67,7 @@ export interface LearningItem {
   position: number;
   unlock_rules: Record<string, unknown>;
   problem_revision_id: number | null;
+  steps: SnapStep[] | null;
 }
 
 export interface LearningItemTree extends LearningItem {

@@ -235,6 +235,8 @@ def create_item(db: Session, course_id: int, payload: LearningItemCreate) -> Lea
 
     if item_type == LearningItemType.TASK and not payload.problem_revision_id:
         raise HTTPException(status_code=422, detail="Для элемента типа task нужен problem_revision_id")
+    if item_type == LearningItemType.SNAP_TASK and not payload.steps:
+        raise HTTPException(status_code=422, detail="Для элемента типа snap_task нужен хотя бы один этап (steps)")
 
     parent: Optional[LearningItem] = None
     if payload.parent_id is not None:
@@ -260,6 +262,7 @@ def create_item(db: Session, course_id: int, payload: LearningItemCreate) -> Lea
         position=payload.position,
         unlock_rules=payload.unlock_rules,
         problem_revision_id=payload.problem_revision_id,
+        steps=[s.model_dump() for s in payload.steps] if payload.steps else None,
     )
     db.add(item)
     db.commit()
@@ -380,6 +383,7 @@ async def publish_course(db: Session, course_id: int, actor_id: int | None) -> C
             unlock_rules=old.unlock_rules,
             problem_revision_id=old.problem_revision_id,
             is_archived=old.is_archived,
+            steps=old.steps,
         )
         db.add(clone)
         db.flush()

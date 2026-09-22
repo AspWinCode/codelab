@@ -1,4 +1,4 @@
-import { CheckCircle, Lock, RadioButtonUnchecked } from '@mui/icons-material';
+import { CheckCircle, CloseFullscreen, Lock, OpenInFull, RadioButtonUnchecked } from '@mui/icons-material';
 import {
   Alert, Box, Button, Chip, Container, Divider, Drawer, List, ListItemButton,
   ListItemIcon, ListItemText, Stack, TextField, Typography,
@@ -17,7 +17,76 @@ const DRAWER_WIDTH = 300;
 const TYPE_LABEL: Record<string, string> = {
   theory: 'Теория', video: 'Видео', file: 'Файл', link: 'Ссылка',
   quiz: 'Тест', task: 'Задача', manual: 'Ручное задание', checkpoint: 'Контрольная точка',
+  snap_task: 'Задание Snap!',
 };
+
+const SNAP_URL = 'https://snap.tirskix.space';
+
+/** Слева — пошаговая инструкция (стрелки листают steps), справа — статичный
+ * iframe Snap!. iframe рендерится безусловно на каждый рендер компонента,
+ * поэтому не перемонтируется при листании шагов или переключении полноэкранного
+ * режима — сохраняется состояние проекта ученика внутри Snap!. */
+function SnapTaskView({ item }: { item: LearningItemTree }) {
+  const steps = item.steps || [];
+  const [stepIndex, setStepIndex] = useState(0);
+  const [snapExpanded, setSnapExpanded] = useState(false);
+
+  useEffect(() => { setStepIndex(0); }, [item.id]);
+
+  const step = steps[stepIndex];
+
+  return (
+    <Box sx={{ display: 'flex', height: 'calc(100vh - 64px)', width: '100%' }}>
+      <Box
+        sx={{
+          width: snapExpanded ? 0 : { xs: '100%', md: '42%' },
+          minWidth: snapExpanded ? 0 : { md: 340 },
+          overflow: 'hidden',
+          transition: 'width 0.2s ease',
+          borderRight: snapExpanded ? 'none' : '1px solid',
+          borderColor: 'divider',
+          display: 'flex',
+          flexDirection: 'column',
+        }}
+      >
+        <Box sx={{ p: 3, flex: 1, overflowY: 'auto' }}>
+          <Typography variant="h2" sx={{ mb: 0.5 }}>{item.title}</Typography>
+          {steps.length > 0 && (
+            <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+              Шаг {stepIndex + 1} из {steps.length}{step?.title ? ` — ${step.title}` : ''}
+            </Typography>
+          )}
+          <Box className="preview" dangerouslySetInnerHTML={{ __html: renderContentHtml(step?.content || '') }} />
+        </Box>
+        {steps.length > 1 && (
+          <Stack direction="row" spacing={1.5} sx={{ p: 2, borderTop: '1px solid', borderColor: 'divider' }}>
+            <Button disabled={stepIndex === 0} onClick={() => setStepIndex((i) => i - 1)}>Назад</Button>
+            <Button variant="contained" disabled={stepIndex >= steps.length - 1} onClick={() => setStepIndex((i) => i + 1)}>Далее</Button>
+          </Stack>
+        )}
+      </Box>
+
+      <Box sx={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' }}>
+        <Stack direction="row" justifyContent="flex-end" sx={{ px: 1.5, py: 1, borderBottom: '1px solid', borderColor: 'divider' }}>
+          <Button
+            size="small"
+            startIcon={snapExpanded ? <CloseFullscreen fontSize="small" /> : <OpenInFull fontSize="small" />}
+            onClick={() => setSnapExpanded((v) => !v)}
+          >
+            {snapExpanded ? 'Показать инструкцию' : 'Snap! на весь экран'}
+          </Button>
+        </Stack>
+        <Box sx={{ flex: 1 }}>
+          <iframe
+            src={SNAP_URL}
+            title="Snap!"
+            style={{ width: '100%', height: '100%', border: 'none', display: 'block' }}
+          />
+        </Box>
+      </Box>
+    </Box>
+  );
+}
 
 function flatten(items: LearningItemTree[]): LearningItemTree[] {
   return items.flatMap((i) => [i, ...flatten(i.children)]);
@@ -163,6 +232,9 @@ export default function CoursePage() {
         </Drawer>
 
         <Box sx={{ flex: 1, minWidth: 0 }}>
+          {selected && selected.type === 'snap_task' ? (
+            <SnapTaskView item={selected} />
+          ) : (
           <Container maxWidth="md" sx={{ py: 4 }}>
             {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
             {!selected && <Typography color="text.secondary">Выберите элемент курса слева.</Typography>}
@@ -276,6 +348,7 @@ export default function CoursePage() {
               </Box>
             )}
           </Container>
+          )}
         </Box>
       </Box>
     </Layout>

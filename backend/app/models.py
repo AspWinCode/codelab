@@ -45,6 +45,10 @@ class LearningItemType(str, enum.Enum):
     TASK = "task"
     MANUAL = "manual"
     CHECKPOINT = "checkpoint"
+    # Snap!-задание (блочное программирование, IAM для «Новичок»): слева
+    # пошаговая инструкция (см. LearningItem.steps), справа постоянный iframe
+    # на snap.tirskix.space — редактор не перезагружается между шагами.
+    SNAP_TASK = "snap_task"
     # Структурные узлы дерева курса — организационная иерархия без
     # собственного контента, ровно 4 уровня (см. app/services/tree_rules.py):
     # модуль → подмодуль → тема → подтема. Контентные типы выше могут лежать
@@ -180,6 +184,10 @@ class LearningItem(Base):
     # Условия открытия — например {"after_item_id": 12, "min_score": 60} (LMS-004).
     unlock_rules = Column(JSON, nullable=False, default=dict)
     problem_revision_id = Column(Integer, ForeignKey("problem_revisions.id"), nullable=True)
+    # Шаги для type=snap_task: [{"title": str, "content": html}, ...]. Панель
+    # Snap! в них не участвует — она одна и статична на весь элемент, шаги
+    # листают только текст инструкции слева.
+    steps = Column(JSON, nullable=True)
     # Архивация каскадится на все дочерние узлы в момент действия (см.
     # app/services/tree_rules.py: set_item_archived) — простой флаг, не
     # "скрыт, если у предка is_archived", чтобы не пересчитывать видимость
