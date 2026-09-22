@@ -128,6 +128,10 @@ class Course(Base):
     title = Column(String(255), nullable=False)
     description = Column(Text, nullable=True)
     status = Column(SQLEnum(CourseStatus), nullable=False, default=CourseStatus.DRAFT)
+    # Отдельно от status: "архивный" — просто скрыт из основного списка студии
+    # методиста, не про публикацию (тот же смысл, что LearningItem.is_archived).
+    # status тем временем остаётся про publish/unpublish жизненный цикл курса.
+    is_archived = Column(Boolean, nullable=False, default=False)
     created_by_id = Column(Integer, ForeignKey("users.id"), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())

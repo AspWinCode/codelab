@@ -11,8 +11,10 @@ from app.database import get_db
 from app.deps import get_current_user, require_role
 from app.models import Course, CourseStatus, Enrollment, LearningItem, User
 from app.schemas import (
+    CourseArchiveIn,
     CourseCreate,
     CourseOut,
+    CourseUpdate,
     LastPositionIn,
     LearningItemArchiveIn,
     LearningItemCreate,
@@ -189,6 +191,30 @@ def set_last_position(
     enrollment.last_item_id = payload.item_id
     db.commit()
     return {"ok": True}
+
+
+@router.put("/{course_id}", response_model=CourseOut)
+def update_course(
+    course_id: int, payload: CourseUpdate,
+    db: Session = Depends(get_db), user: User = Depends(require_role("methodist", "admin")),
+):
+    course_admin.ensure_course_owner(course_admin.get_course_or_404(db, course_id), user)
+    return course_admin.update_course(db, course_id, payload)
+
+
+@router.put("/{course_id}/archive", response_model=CourseOut)
+def archive_course(
+    course_id: int, payload: CourseArchiveIn,
+    db: Session = Depends(get_db), user: User = Depends(require_role("methodist", "admin")),
+):
+    course_admin.ensure_course_owner(course_admin.get_course_or_404(db, course_id), user)
+    return course_admin.set_course_archived(db, course_id, payload.archived)
+
+
+@router.delete("/{course_id}", status_code=204)
+def delete_course(course_id: int, db: Session = Depends(get_db), user: User = Depends(require_role("methodist", "admin"))):
+    course_admin.ensure_course_owner(course_admin.get_course_or_404(db, course_id), user)
+    course_admin.delete_course(db, course_id)
 
 
 @router.post("/{course_id}/publish", response_model=CourseOut)

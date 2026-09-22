@@ -21,8 +21,10 @@ from app.schemas import (
     AdminUserBlockIn,
     AdminUserOut,
     CourseAnalyticsOut,
+    CourseArchiveIn,
     CourseCreate,
     CourseOut,
+    CourseUpdate,
     EnvironmentOut,
     LearningItemArchiveIn,
     LearningItemCreate,
@@ -200,6 +202,30 @@ def get_tree(course_id: int, db: Session = Depends(get_db), staff: User = Depend
     version = course_admin.get_draft_version(db, course_id)
     items = db.query(LearningItem).filter(LearningItem.course_version_id == version.id).order_by(LearningItem.position).all()
     return course_admin.build_tree(items)
+
+
+@router.put("/courses/{course_id}", response_model=CourseOut)
+def update_course(
+    course_id: int, payload: CourseUpdate,
+    db: Session = Depends(get_db), staff: User = Depends(resolve_staff_user),
+):
+    course_admin.ensure_course_owner(course_admin.get_course_or_404(db, course_id), staff)
+    return course_admin.update_course(db, course_id, payload)
+
+
+@router.put("/courses/{course_id}/archive", response_model=CourseOut)
+def archive_course(
+    course_id: int, payload: CourseArchiveIn,
+    db: Session = Depends(get_db), staff: User = Depends(resolve_staff_user),
+):
+    course_admin.ensure_course_owner(course_admin.get_course_or_404(db, course_id), staff)
+    return course_admin.set_course_archived(db, course_id, payload.archived)
+
+
+@router.delete("/courses/{course_id}", status_code=204)
+def delete_course(course_id: int, db: Session = Depends(get_db), staff: User = Depends(resolve_staff_user)):
+    course_admin.ensure_course_owner(course_admin.get_course_or_404(db, course_id), staff)
+    course_admin.delete_course(db, course_id)
 
 
 @router.post("/courses/{course_id}/publish", response_model=CourseOut)

@@ -24,7 +24,9 @@ from app.models import (
     User,
 )
 from app.schemas import (
+    CourseArchiveIn,
     CourseCreate,
+    CourseUpdate,
     LearningItemCreate,
     LearningItemOut,
     LearningItemTree,
@@ -149,6 +151,50 @@ def create_course(db: Session, payload: CourseCreate, created_by_id: int | None)
     db.commit()
     db.refresh(course)
     return course
+
+
+def update_course(db: Session, course_id: int, payload: CourseUpdate) -> Course:
+    course = get_course_or_404(db, course_id)
+    for field, value in payload.model_dump(exclude_unset=True).items():
+        setattr(course, field, value)
+    db.commit()
+    db.refresh(course)
+    return course
+
+
+def set_course_archived(db: Session, course_id: int, archived: bool) -> Course:
+    course = get_course_or_404(db, course_id)
+    course.is_archived = archived
+    db.commit()
+    db.refresh(course)
+    return course
+
+
+def delete_course(db: Session, course_id: int) -> None:
+    """Удалить курс целиком можно, только пока он ни разу не публиковался —
+    иначе у него могли появиться реальные зачисления/посылки учеников, и снос
+    их безвозвратно недопустим. Для уже публиковавшихся курсов — только
+    архивация (set_course_archived), не удаление."""
+    course = get_course_or_404(db, course_id)
+    if course.status != CourseStatus.DRAFT:
+        raise HTTPException(
+            status_code=409,
+            detail="Курс уже публиковался — удалить нельзя, только архивировать",
+        )
+
+    version_ids = [v.id for v in db.query(CourseVersion).filter(CourseVersion.course_id == course_id).all()]
+    problem_revision_ids = [
+        pid for (pid,) in db.query(LearningItem.problem_revision_id)
+        .filter(LearningItem.course_version_id.in_(version_ids), LearningItem.problem_revision_id.isnot(None))
+        .all()
+    ]
+    if problem_revision_ids:
+        db.query(Submission).filter(Submission.problem_revision_id.in_(problem_revision_ids)).delete(synchronize_session=False)
+        db.query(ProblemRevision).filter(ProblemRevision.id.in_(problem_revision_ids)).delete(synchronize_session=False)
+    db.query(LearningItem).filter(LearningItem.course_version_id.in_(version_ids)).delete(synchronize_session=False)
+    db.query(CourseVersion).filter(CourseVersion.course_id == course_id).delete(synchronize_session=False)
+    db.delete(course)
+    db.commit()
 
 
 def create_task(db: Session, course_id: int, payload: ProblemRevisionCreate, author_id: int | None) -> ProblemRevision:

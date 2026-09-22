@@ -82,12 +82,23 @@ class CourseCreate(BaseModel):
     description: Optional[str] = None
 
 
+class CourseUpdate(BaseModel):
+    title: Optional[str] = None
+    slug: Optional[str] = None
+    description: Optional[str] = None
+
+
+class CourseArchiveIn(BaseModel):
+    archived: bool
+
+
 class CourseOut(BaseModel):
     id: int
     slug: Optional[str]
     title: str
     description: Optional[str]
     status: str
+    is_archived: bool = False
 
     model_config = ConfigDict(from_attributes=True)
 
