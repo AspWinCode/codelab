@@ -33,8 +33,13 @@ class Settings(BaseSettings):
     uploads_dir: str = "uploads"
     upload_max_image_mb: int = 10
     upload_max_video_mb: int = 200
+    upload_max_document_mb: int = 20
+    upload_max_audio_mb: int = 50
     upload_allowed_image_ext: str = "jpg,jpeg,png,gif,webp"
-    upload_allowed_video_ext: str = "mp4,webm"
+    upload_allowed_video_ext: str = "mp4,webm,mov"
+    # Материалы лекций (PDF-конспекты, аудиозаписи) — не только редактор картинок/видео.
+    upload_allowed_document_ext: str = "pdf"
+    upload_allowed_audio_ext: str = "mp3,wav"
 
     @property
     def upload_allowed_extensions(self) -> dict[str, int]:
@@ -46,6 +51,12 @@ class Settings(BaseSettings):
         for ext in self.upload_allowed_video_ext.split(","):
             if ext.strip():
                 result[ext.strip().lower()] = self.upload_max_video_mb * 1024 * 1024
+        for ext in self.upload_allowed_document_ext.split(","):
+            if ext.strip():
+                result[ext.strip().lower()] = self.upload_max_document_mb * 1024 * 1024
+        for ext in self.upload_allowed_audio_ext.split(","):
+            if ext.strip():
+                result[ext.strip().lower()] = self.upload_max_audio_mb * 1024 * 1024
         return result
 
     @property
