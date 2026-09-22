@@ -10,7 +10,7 @@
 learning-portal-main — менять пути и подпись запроса только синхронно с той
 стороной.
 """
-from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
+from fastapi import APIRouter, Depends, File as FastAPIFile, Header, HTTPException, Query, UploadFile, status
 from sqlalchemy.orm import Session
 
 from app.database import get_db
@@ -36,11 +36,13 @@ from app.schemas import (
     RerunSubmissionsOut,
     SubmissionOut,
     SubmissionReviewOut,
+    UploadOut,
 )
 from app.security import verify_lms_signature
 from app.services import admin_status, analytics, course_admin
 from app.services.environments import list_environments
 from app.services.progress_calc import apply_manual_grade
+from app.services.uploads import save_upload
 
 router = APIRouter()
 
@@ -335,3 +337,14 @@ def get_user_login_history(
         .limit(50)
         .all()
     )
+
+
+@router.post("/uploads", response_model=UploadOut)
+async def admin_upload_file(
+    file: UploadFile = FastAPIFile(...),
+    staff: User = Depends(resolve_staff_user),
+):
+    """EDT-002/008: загрузка изображения из rich-text редактора методиста —
+    методист работает через аккаунт LMS (см. заголовок файла), поэтому
+    cookie-сессия Codelab (routers/uploads.py) здесь недоступна и не нужна."""
+    return await save_upload(file.filename or "", file.read)
