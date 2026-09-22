@@ -24,6 +24,7 @@ from app.schemas import (
     CourseCreate,
     CourseOut,
     EnvironmentOut,
+    LearningItemArchiveIn,
     LearningItemCreate,
     LearningItemOut,
     LearningItemTree,
@@ -141,6 +142,20 @@ def delete_item(item_id: int, db: Session = Depends(get_db), staff: User = Depen
     course_admin.ensure_course_owner(course, staff)
     course_admin.delete_item(db, item_id)
     return {"ok": True}
+
+
+@router.put("/items/{item_id}/archive", response_model=LearningItemOut)
+def archive_item(
+    item_id: int,
+    payload: LearningItemArchiveIn,
+    db: Session = Depends(get_db),
+    staff: User = Depends(resolve_staff_user),
+):
+    """Архивация/разархивация узла — каскадно на всё поддерево, см.
+    course_admin.set_item_archived."""
+    _, course = course_admin.get_course_for_item(db, item_id)
+    course_admin.ensure_course_owner(course, staff)
+    return course_admin.set_item_archived(db, item_id, payload.archived)
 
 
 @router.get("/courses/{course_id}/tree", response_model=list[LearningItemTree])

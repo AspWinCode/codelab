@@ -14,6 +14,7 @@ from app.schemas import (
     CourseCreate,
     CourseOut,
     LastPositionIn,
+    LearningItemArchiveIn,
     LearningItemCreate,
     LearningItemOut,
     LearningItemTree,
@@ -91,6 +92,18 @@ def delete_item(item_id: int, db: Session = Depends(get_db), user: User = Depend
     course_admin.ensure_course_owner(course, user)
     course_admin.delete_item(db, item_id)
     return {"ok": True}
+
+
+@router.put("/items/{item_id}/archive", response_model=LearningItemOut)
+def archive_item(
+    item_id: int,
+    payload: LearningItemArchiveIn,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_role("methodist", "admin")),
+):
+    _, course = course_admin.get_course_for_item(db, item_id)
+    course_admin.ensure_course_owner(course, user)
+    return course_admin.set_item_archived(db, item_id, payload.archived)
 
 
 @router.get("/{course_id}/tree", response_model=list[LearningItemTree])

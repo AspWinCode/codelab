@@ -45,6 +45,14 @@ class LearningItemType(str, enum.Enum):
     TASK = "task"
     MANUAL = "manual"
     CHECKPOINT = "checkpoint"
+    # Структурные узлы дерева курса — организационная иерархия без
+    # собственного контента, ровно 4 уровня (см. app/services/tree_rules.py):
+    # модуль → подмодуль → тема → подтема. Контентные типы выше могут лежать
+    # на любом из этих уровней.
+    MODULE = "module"
+    SUBMODULE = "submodule"
+    TOPIC = "topic"
+    SUBTOPIC = "subtopic"
 
 
 # Статусы посылки — JDG-001, JDG-004.
@@ -172,6 +180,11 @@ class LearningItem(Base):
     # Условия открытия — например {"after_item_id": 12, "min_score": 60} (LMS-004).
     unlock_rules = Column(JSON, nullable=False, default=dict)
     problem_revision_id = Column(Integer, ForeignKey("problem_revisions.id"), nullable=True)
+    # Архивация каскадится на все дочерние узлы в момент действия (см.
+    # app/services/tree_rules.py: set_item_archived) — простой флаг, не
+    # "скрыт, если у предка is_archived", чтобы не пересчитывать видимость
+    # по всей цепочке предков на каждый рендер дерева.
+    is_archived = Column(Boolean, nullable=False, default=False)
 
     course_version = relationship("CourseVersion", back_populates="items")
     # remote_side идёт на backref ("parent"), не на "children" — иначе

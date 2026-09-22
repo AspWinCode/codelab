@@ -17,7 +17,7 @@ def test_course_tree_and_publish_flow(client, db_session):
     }).json()
 
     module = client.post(f"/api/courses/{course['id']}/items", json={
-        "type": "theory", "title": "Модуль 1", "position": 0,
+        "type": "module", "title": "Модуль 1", "position": 0,
     }).json()
     item = client.post(f"/api/courses/{course['id']}/items", json={
         "type": "task", "title": "Задача: сумма", "parent_id": module["id"],

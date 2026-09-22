@@ -34,6 +34,7 @@ from app.schemas import (
 )
 from app.services.lms_client import notify_course_webhook
 from app.services.progress_calc import is_item_unlocked, resolve_official_score
+from app.services.tree_rules import validate_parent
 
 
 def get_course_or_404(db: Session, course_id: int) -> Course:
@@ -131,7 +132,11 @@ def build_student_tree(db: Session, user_id: int, items: list[LearningItem]) -> 
         if i.type == LearningItemType.TASK and i.problem_revision_id
         and (resolve_official_score(db, user_id, i.problem_revision_id) or 0) > 0
     }
-    return build_tree(items, unlocked_ids, completed_ids)
+    # Архивация каскадится на всё поддерево при самом действии (см.
+    # set_item_archived), поэтому фильтровать по собственному is_archived
+    # здесь достаточно — не может остаться неархивный потомок архивного узла.
+    visible_items = [i for i in items if not i.is_archived]
+    return build_tree(visible_items, unlocked_ids, completed_ids)
 
 
 def create_course(db: Session, payload: CourseCreate, created_by_id: int | None) -> Course:
@@ -177,6 +182,7 @@ def create_item(db: Session, course_id: int, payload: LearningItemCreate) -> Lea
     if item_type == LearningItemType.TASK and not payload.problem_revision_id:
         raise HTTPException(status_code=422, detail="Для элемента типа task нужен problem_revision_id")
 
+    parent: Optional[LearningItem] = None
     if payload.parent_id is not None:
         parent = (
             db.query(LearningItem)
@@ -185,6 +191,8 @@ def create_item(db: Session, course_id: int, payload: LearningItemCreate) -> Lea
         )
         if not parent:
             raise HTTPException(status_code=404, detail="Родительский элемент не найден в черновике этого курса")
+
+    validate_parent(item_type, parent)
 
     item = LearningItem(
         course_version_id=version.id,
@@ -205,16 +213,45 @@ def create_item(db: Session, course_id: int, payload: LearningItemCreate) -> Lea
     return item
 
 
-def update_item(db: Session, item_id: int, payload: LearningItemUpdate) -> LearningItem:
+def _get_draft_item_or_404(db: Session, item_id: int) -> LearningItem:
     item = db.query(LearningItem).filter(LearningItem.id == item_id).first()
     if not item:
         raise HTTPException(status_code=404, detail="Элемент не найден")
-
     version = db.query(CourseVersion).filter(CourseVersion.id == item.course_version_id).first()
     if version and version.published_at is not None:
         raise HTTPException(status_code=409, detail="Нельзя менять уже опубликованную версию курса")
+    return item
 
-    for field, value in payload.model_dump(exclude_unset=True).items():
+
+def _collect_descendant_ids(db: Session, root_id: int) -> list[int]:
+    """Обход в ширину — id возвращаются уровень за уровнем (родители раньше
+    своих детей), это важно для порядка каскадного удаления ниже."""
+    all_ids: list[int] = []
+    frontier = [root_id]
+    while frontier:
+        children = db.query(LearningItem.id).filter(LearningItem.parent_id.in_(frontier)).all()
+        child_ids = [c.id for c in children]
+        all_ids.extend(child_ids)
+        frontier = child_ids
+    return all_ids
+
+
+def update_item(db: Session, item_id: int, payload: LearningItemUpdate) -> LearningItem:
+    item = _get_draft_item_or_404(db, item_id)
+
+    updates = payload.model_dump(exclude_unset=True)
+    if "parent_id" in updates:
+        new_parent_id = updates["parent_id"]
+        if new_parent_id == item_id:
+            raise HTTPException(status_code=422, detail="Элемент не может быть родителем самому себе")
+        new_parent = db.query(LearningItem).filter(LearningItem.id == new_parent_id).first() if new_parent_id is not None else None
+        if new_parent_id is not None and not new_parent:
+            raise HTTPException(status_code=404, detail="Родительский элемент не найден")
+        if new_parent is not None and new_parent.id in _collect_descendant_ids(db, item_id):
+            raise HTTPException(status_code=422, detail="Нельзя переместить узел внутрь его же поддерева")
+        validate_parent(item.type, new_parent)
+
+    for field, value in updates.items():
         setattr(item, field, value)
     db.commit()
     db.refresh(item)
@@ -222,21 +259,29 @@ def update_item(db: Session, item_id: int, payload: LearningItemUpdate) -> Learn
 
 
 def delete_item(db: Session, item_id: int) -> None:
-    """RBAC-004: удаление учебных сущностей — через архивирование, если на них
-    есть назначения/попытки/ссылки из отчётов. У элемента черновика ссылок на
-    назначения ещё быть не может (черновик не назначен), поэтому здесь —
-    обычное удаление; для опубликованных версий редактирование запрещено выше."""
-    item = db.query(LearningItem).filter(LearningItem.id == item_id).first()
-    if not item:
-        raise HTTPException(status_code=404, detail="Элемент не найден")
+    """Каскадно удаляет узел вместе со всем поддеревом (иерархия
+    Модуль/Подмодуль/Тема/Подтема — снос ветки целиком, по решению
+    владельца продукта 2026-09-22). Порядок — от листьев к корню, иначе
+    self-referential FK parent_id не даст удалить родителя раньше детей."""
+    item = _get_draft_item_or_404(db, item_id)
 
-    version = db.query(CourseVersion).filter(CourseVersion.id == item.course_version_id).first()
-    if version and version.published_at is not None:
-        raise HTTPException(status_code=409, detail="Нельзя менять уже опубликованную версию курса")
-
-    db.query(LearningItem).filter(LearningItem.parent_id == item_id).update({"parent_id": None})
+    descendant_ids = _collect_descendant_ids(db, item_id)
+    for descendant_id in reversed(descendant_ids):
+        db.query(LearningItem).filter(LearningItem.id == descendant_id).delete()
     db.delete(item)
     db.commit()
+
+
+def set_item_archived(db: Session, item_id: int, archived: bool) -> LearningItem:
+    """Архивация каскадится на всё поддерево — скрытая тема прячет и все
+    свои подтемы/материалы, не только себя (симметрично delete_item)."""
+    item = _get_draft_item_or_404(db, item_id)
+
+    ids = [item_id, *_collect_descendant_ids(db, item_id)]
+    db.query(LearningItem).filter(LearningItem.id.in_(ids)).update({"is_archived": archived}, synchronize_session=False)
+    db.commit()
+    db.refresh(item)
+    return item
 
 
 async def publish_course(db: Session, course_id: int, actor_id: int | None) -> Course:
@@ -280,6 +325,7 @@ async def publish_course(db: Session, course_id: int, actor_id: int | None) -> C
             position=old.position,
             unlock_rules=old.unlock_rules,
             problem_revision_id=old.problem_revision_id,
+            is_archived=old.is_archived,
         )
         db.add(clone)
         db.flush()

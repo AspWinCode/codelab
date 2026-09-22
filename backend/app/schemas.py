@@ -68,9 +68,14 @@ class CourseOut(BaseModel):
 
 class LearningItemCreate(BaseModel):
     """LMS-001..004: элемент дерева курса. Для type="task" обязателен
-    problem_revision_id — сама задача создаётся отдельно, POST /courses/{id}/tasks."""
+    problem_revision_id — сама задача создаётся отдельно, POST /courses/{id}/tasks.
 
-    type: str  # theory | video | file | link | quiz | task | manual | checkpoint
+    4 структурных типа — module/submodule/topic/subtopic — образуют жёсткую
+    иерархию (каждый только внутри непосредственного родителя, см.
+    app/services/tree_rules.py); остальные типы — контент, может лежать на
+    любом из этих уровней или в корне курса."""
+
+    type: str  # theory|video|file|link|quiz|task|manual|checkpoint|module|submodule|topic|subtopic
     title: str
     description: Optional[str] = None
     content: Optional[str] = None
@@ -105,8 +110,13 @@ class LearningItemOut(BaseModel):
     position: int
     unlock_rules: dict
     problem_revision_id: Optional[int]
+    is_archived: bool = False
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class LearningItemArchiveIn(BaseModel):
+    archived: bool
 
 
 class LearningItemTree(LearningItemOut):
