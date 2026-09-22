@@ -30,6 +30,8 @@ from app.schemas import (
     LearningItemTree,
     LearningItemUpdate,
     ProblemRevisionCreate,
+    ProblemRevisionStudentOut,
+    ProblemTestOut,
     SubmissionReviewOut,
 )
 from app.services.lms_client import notify_course_webhook
@@ -169,6 +171,58 @@ def create_task(db: Session, course_id: int, payload: ProblemRevisionCreate, aut
     db.commit()
     db.refresh(revision)
     return revision
+
+
+def get_task_or_404(db: Session, problem_revision_id: int) -> ProblemRevision:
+    task = db.query(ProblemRevision).filter(ProblemRevision.id == problem_revision_id).first()
+    if not task:
+        raise HTTPException(status_code=404, detail="Задача не найдена")
+    return task
+
+
+def get_course_for_task(db: Session, problem_revision_id: int) -> Optional[Course]:
+    """None — задача создана, но ещё ни к одному элементу дерева не
+    привязана (create_task отдельно от create_item, TASK-006): владельца
+    проверить нечем, дальше решает вызывающий код."""
+    item = db.query(LearningItem).filter(LearningItem.problem_revision_id == problem_revision_id).first()
+    if not item:
+        return None
+    version = db.query(CourseVersion).filter(CourseVersion.id == item.course_version_id).first()
+    return db.query(Course).filter(Course.id == version.course_id).first() if version else None
+
+
+def update_task(db: Session, problem_revision_id: int, payload: ProblemRevisionCreate) -> ProblemRevision:
+    """Правки применяются к СУЩЕСТВУЮЩЕЙ ревизии на месте (не создают новую) —
+    так массовая перепроверка (TASK-007, rerun_submissions) после починки
+    тестов действительно перепроверяет посылки по исправленным тестам: они
+    хранят problem_revision_id, а не копию тестов на момент отправки."""
+    task = get_task_or_404(db, problem_revision_id)
+    for field, value in payload.model_dump(exclude={"tests"}).items():
+        setattr(task, field, value)
+    task.tests = [t.model_dump() for t in payload.tests]
+    db.commit()
+    db.refresh(task)
+    return task
+
+
+def to_student_problem_out(task: ProblemRevision) -> ProblemRevisionStudentOut:
+    """STU-003: студент не должен получить вход/эталонный вывод скрытых
+    тестов (иначе можно захардкодить решение под конкретный скрытый набор,
+    не решая задачу) — отдаём только is_hidden=False."""
+    visible = [ProblemTestOut(**t) for t in (task.tests or []) if not t.get("is_hidden")]
+    return ProblemRevisionStudentOut(
+        id=task.id,
+        title=task.title,
+        statement=task.statement,
+        input_format=task.input_format,
+        output_format=task.output_format,
+        constraints=task.constraints,
+        time_limit_ms=task.time_limit_ms,
+        memory_limit_mb=task.memory_limit_mb,
+        language=task.language,
+        allowed_libraries=task.allowed_libraries,
+        visible_tests=visible,
+    )
 
 
 def create_item(db: Session, course_id: int, payload: LearningItemCreate) -> LearningItem:

@@ -5,7 +5,7 @@ import {
 } from '@mui/material';
 import { useEffect, useRef, useState } from 'react';
 import { useParams, useSearchParams } from 'react-router-dom';
-import { api, LearningItemTree, RunResult, Submission } from '../api';
+import { api, LearningItemTree, ProblemForStudent, RunResult, Submission } from '../api';
 import Layout from '../components/Layout';
 import { FONT_CODE } from '../theme';
 import { renderContentHtml } from '../utils/renderContent';
@@ -72,6 +72,7 @@ export default function CoursePage() {
   const [runResult, setRunResult] = useState<RunResult | null>(null);
   const [submission, setSubmission] = useState<Submission | null>(null);
   const [history, setHistory] = useState<Submission[]>([]);
+  const [problem, setProblem] = useState<ProblemForStudent | null>(null);
   const [error, setError] = useState('');
   const pollTimer = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -95,9 +96,11 @@ export default function CoursePage() {
     setRunResult(null);
     setSubmission(null);
     setHistory([]);
+    setProblem(null);
     api.setLastPosition(Number(courseId), item.id).catch(() => {});
     if (item.type === 'task' && item.problem_revision_id) {
       api.mySubmissions(item.problem_revision_id).then(setHistory).catch(() => {});
+      api.getProblem(item.problem_revision_id).then(setProblem).catch((e) => setError(e.message));
     }
   };
 
@@ -174,6 +177,41 @@ export default function CoursePage() {
             {selected && selected.type === 'task' && (
               <Box>
                 <Typography variant="h2" sx={{ mb: 2 }}>{selected.title}</Typography>
+
+                {problem && (
+                  <Box sx={{ mb: 2.5 }}>
+                    <Box className="preview" dangerouslySetInnerHTML={{ __html: renderContentHtml(problem.statement) }} />
+                    {(problem.input_format || problem.output_format) && (
+                      <Stack direction="row" spacing={3} sx={{ mt: 1.5 }}>
+                        {problem.input_format && (
+                          <Box>
+                            <Typography variant="subtitle2">Формат ввода</Typography>
+                            <Typography variant="body2" color="text.secondary">{problem.input_format}</Typography>
+                          </Box>
+                        )}
+                        {problem.output_format && (
+                          <Box>
+                            <Typography variant="subtitle2">Формат вывода</Typography>
+                            <Typography variant="body2" color="text.secondary">{problem.output_format}</Typography>
+                          </Box>
+                        )}
+                      </Stack>
+                    )}
+                    {problem.visible_tests.length > 0 && (
+                      <Box sx={{ mt: 1.5 }}>
+                        <Typography variant="subtitle2" sx={{ mb: 1 }}>Примеры</Typography>
+                        <Stack spacing={1}>
+                          {problem.visible_tests.map((t, i) => (
+                            <Stack key={i} direction="row" spacing={2}>
+                              <Box component="pre" sx={{ flex: 1, m: 0, fontFamily: FONT_CODE, fontSize: '0.8125rem', bgcolor: 'background.paper', border: '1px solid', borderColor: 'divider', borderRadius: 2, p: 1.5, whiteSpace: 'pre-wrap' }}>{t.input}</Box>
+                              <Box component="pre" sx={{ flex: 1, m: 0, fontFamily: FONT_CODE, fontSize: '0.8125rem', bgcolor: 'background.paper', border: '1px solid', borderColor: 'divider', borderRadius: 2, p: 1.5, whiteSpace: 'pre-wrap' }}>{t.expected}</Box>
+                            </Stack>
+                          ))}
+                        </Stack>
+                      </Box>
+                    )}
+                  </Box>
+                )}
 
                 <TextField
                   multiline fullWidth minRows={12} maxRows={24}

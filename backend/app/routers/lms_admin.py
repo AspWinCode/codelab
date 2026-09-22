@@ -115,6 +115,39 @@ def create_task(
     return course_admin.create_task(db, course_id, payload, author_id=staff.id)
 
 
+def _ensure_task_owner(db: Session, problem_revision_id: int, staff: User) -> None:
+    course = course_admin.get_course_for_task(db, problem_revision_id)
+    if course:
+        course_admin.ensure_course_owner(course, staff)
+    elif staff.role not in ("methodist", "admin"):
+        # Задача создана, но ещё не привязана в дерево ни одного курса —
+        # владельца проверить нечем; пускаем только тех, кто вообще может
+        # авторствовать задачи (create_task и так требует того же).
+        raise HTTPException(status_code=403, detail="Недостаточно прав")
+
+
+@router.get("/tasks/{problem_revision_id}", response_model=ProblemRevisionOut)
+def get_task(problem_revision_id: int, db: Session = Depends(get_db), staff: User = Depends(resolve_staff_user)):
+    task = course_admin.get_task_or_404(db, problem_revision_id)
+    _ensure_task_owner(db, problem_revision_id, staff)
+    return task
+
+
+@router.put("/tasks/{problem_revision_id}", response_model=ProblemRevisionOut)
+def update_task(
+    problem_revision_id: int,
+    payload: ProblemRevisionCreate,
+    db: Session = Depends(get_db),
+    staff: User = Depends(resolve_staff_user),
+):
+    """Правки применяются на месте — существующие посылки продолжают
+    ссылаться на тот же problem_revision_id, TASK-007 (массовая
+    перепроверка) после этого перепроверяет их по исправленным тестам."""
+    course_admin.get_task_or_404(db, problem_revision_id)
+    _ensure_task_owner(db, problem_revision_id, staff)
+    return course_admin.update_task(db, problem_revision_id, payload)
+
+
 @router.post("/courses/{course_id}/items", response_model=LearningItemOut)
 def create_item(
     course_id: int,

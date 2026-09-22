@@ -50,6 +50,32 @@ class ProblemRevisionOut(ProblemRevisionCreate):
     model_config = ConfigDict(from_attributes=True)
 
 
+class ProblemTestOut(BaseModel):
+    input: str
+    expected: str
+    is_hidden: bool = False
+    group: str = "default"
+    weight: float = 1.0
+
+
+class ProblemRevisionStudentOut(BaseModel):
+    """STU-003: то же, что ProblemRevisionOut, но без reference_solution,
+    checker/scoring_policy/max_attempts (не студенческое дело) и без
+    скрытых тестов — только visible_tests (см. course_admin.to_student_problem_out)."""
+
+    id: int
+    title: str
+    statement: str
+    input_format: Optional[str]
+    output_format: Optional[str]
+    constraints: Optional[str]
+    time_limit_ms: int
+    memory_limit_mb: int
+    language: str
+    allowed_libraries: List[str]
+    visible_tests: List[ProblemTestOut]
+
+
 class CourseCreate(BaseModel):
     title: str
     slug: Optional[str] = None

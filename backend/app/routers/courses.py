@@ -21,6 +21,7 @@ from app.schemas import (
     LearningItemUpdate,
     ProblemRevisionCreate,
     ProblemRevisionOut,
+    ProblemRevisionStudentOut,
     RerunSubmissionsIn,
     RerunSubmissionsOut,
 )
@@ -53,6 +54,41 @@ def create_task(
 ):
     course_admin.ensure_course_owner(course_admin.get_course_or_404(db, course_id), user)
     return course_admin.create_task(db, course_id, payload, author_id=user.id)
+
+
+def _ensure_task_owner(db: Session, problem_revision_id: int, user: User) -> None:
+    course = course_admin.get_course_for_task(db, problem_revision_id)
+    if course:
+        course_admin.ensure_course_owner(course, user)
+
+
+@router.get("/tasks/{problem_revision_id}", response_model=ProblemRevisionOut)
+def get_task(problem_revision_id: int, db: Session = Depends(get_db), user: User = Depends(require_role("methodist", "admin"))):
+    task = course_admin.get_task_or_404(db, problem_revision_id)
+    _ensure_task_owner(db, problem_revision_id, user)
+    return task
+
+
+@router.put("/tasks/{problem_revision_id}", response_model=ProblemRevisionOut)
+def update_task(
+    problem_revision_id: int,
+    payload: ProblemRevisionCreate,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_role("methodist", "admin")),
+):
+    course_admin.get_task_or_404(db, problem_revision_id)
+    _ensure_task_owner(db, problem_revision_id, user)
+    return course_admin.update_task(db, problem_revision_id, payload)
+
+
+@router.get("/problems/{problem_revision_id}", response_model=ProblemRevisionStudentOut)
+def get_problem_for_student(problem_revision_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    """STU-003: условие задачи (statement/input_format/output_format) и
+    видимые примеры — без reference_solution и скрытых тестов. Раньше это
+    вообще не отдавалось ученику: CoursePage показывал только редактор кода,
+    без условия задачи."""
+    task = course_admin.get_task_or_404(db, problem_revision_id)
+    return course_admin.to_student_problem_out(task)
 
 
 @router.post("/{course_id}/items", response_model=LearningItemOut)

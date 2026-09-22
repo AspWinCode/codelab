@@ -122,6 +122,29 @@ export interface NotificationPreference {
   mandatory: boolean;
 }
 
+// STU-003: условие задачи для ученика — без reference_solution и скрытых тестов.
+export interface ProblemTest {
+  input: string;
+  expected: string;
+  is_hidden: boolean;
+  group: string;
+  weight: number;
+}
+
+export interface ProblemForStudent {
+  id: number;
+  title: string;
+  statement: string;
+  input_format: string | null;
+  output_format: string | null;
+  constraints: string | null;
+  time_limit_ms: number;
+  memory_limit_mb: number;
+  language: string;
+  allowed_libraries: string[];
+  visible_tests: ProblemTest[];
+}
+
 export const api = {
   me: () => request<Me>('/auth/me'),
   courses: () => request<Course[]>('/courses'),
@@ -134,6 +157,7 @@ export const api = {
     request<LearningItem>(`/courses/items/${id}`, { method: 'PUT', body: JSON.stringify(patch) }),
   mySubmissions: (problemRevisionId: number) =>
     request<Submission[]>(`/submissions?problem_revision_id=${problemRevisionId}`),
+  getProblem: (problemRevisionId: number) => request<ProblemForStudent>(`/courses/problems/${problemRevisionId}`),
   upload: async (file: File): Promise<UploadResult> => {
     const form = new FormData();
     form.append('file', file);
