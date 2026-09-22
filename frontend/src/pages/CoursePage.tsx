@@ -1,11 +1,11 @@
-import { CheckCircle, CloseFullscreen, Lock, OpenInFull, RadioButtonUnchecked } from '@mui/icons-material';
+import { CheckCircle, CloseFullscreen, ExpandLess, ExpandMore, Lock, OpenInFull, RadioButtonUnchecked } from '@mui/icons-material';
 import {
-  Alert, Box, Button, Chip, Container, Divider, Drawer, List, ListItemButton,
-  ListItemIcon, ListItemText, Stack, TextField, Typography,
+  Alert, Box, Button, Checkbox, Chip, Container, Divider, Drawer, FormControlLabel,
+  FormGroup, List, ListItemButton, ListItemIcon, ListItemText, Paper, Stack, TextField, Typography,
 } from '@mui/material';
 import { useEffect, useRef, useState } from 'react';
 import { useParams, useSearchParams } from 'react-router-dom';
-import { api, LearningItemTree, ProblemForStudent, RunResult, Submission } from '../api';
+import { api, LearningItemTree, ProblemForStudent, QuizAttempt, RunResult, Submission } from '../api';
 import Layout from '../components/Layout';
 import { FONT_CODE } from '../theme';
 import { renderContentHtml } from '../utils/renderContent';
@@ -88,6 +88,87 @@ function SnapTaskView({ item }: { item: LearningItemTree }) {
   );
 }
 
+/** Прохождение теста (type=quiz) — один тип вопроса, несколько правильных
+ * ответов (checkbox). key={item.id} на месте использования сбрасывает
+ * локальный стейт при переключении на другой тест (та же проблема, что
+ * чинили для code-редактора задач — старые отметки не должны переползать
+ * на новый тест). */
+function QuizView({ item }: { item: LearningItemTree }) {
+  const questions = item.quiz_questions || [];
+  const [selected, setSelected] = useState<Set<number>[]>(() => questions.map(() => new Set()));
+  const [result, setResult] = useState<QuizAttempt | null>(null);
+  const [lastAttempt, setLastAttempt] = useState<QuizAttempt | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    api.myQuizAttempts(item.id)
+      .then((attempts) => setLastAttempt(attempts[0] || null))
+      .catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [item.id]);
+
+  const toggleOption = (qi: number, oi: number) => {
+    setSelected((prev) => {
+      const next = prev.map((s) => new Set(s));
+      if (next[qi].has(oi)) next[qi].delete(oi); else next[qi].add(oi);
+      return next;
+    });
+  };
+
+  const submit = async () => {
+    setSubmitting(true);
+    setError('');
+    try {
+      const attempt = await api.submitQuizAttempt(item.id, selected.map((s) => Array.from(s)));
+      setResult(attempt);
+      setLastAttempt(attempt);
+    } catch (e: any) {
+      setError(e.message);
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <Container maxWidth="md" sx={{ py: 4 }}>
+      <Typography variant="h2" sx={{ mb: 1 }}>{item.title}</Typography>
+      {lastAttempt && !result && (
+        <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+          Лучший результат: {lastAttempt.score}%
+        </Typography>
+      )}
+      {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
+      {result && (
+        <Alert severity={result.score === 100 ? 'success' : 'info'} sx={{ mb: 2 }}>
+          Результат: {result.score}% правильных ответов
+        </Alert>
+      )}
+
+      <Stack spacing={2.5}>
+        {questions.map((q, qi) => (
+          <Paper key={qi} variant="outlined" sx={{ p: 2 }}>
+            <Typography sx={{ mb: 1 }}>{qi + 1}. {q.text}</Typography>
+            <FormGroup>
+              {q.options.map((opt, oi) => (
+                <FormControlLabel
+                  key={oi}
+                  control={<Checkbox checked={selected[qi]?.has(oi) ?? false} onChange={() => toggleOption(qi, oi)} />}
+                  label={opt.text}
+                />
+              ))}
+            </FormGroup>
+          </Paper>
+        ))}
+      </Stack>
+
+      <Button variant="contained" sx={{ mt: 3 }} disabled={submitting || questions.length === 0} onClick={submit}>
+        Отправить
+      </Button>
+    </Container>
+  );
+}
+
 function flatten(items: LearningItemTree[]): LearningItemTree[] {
   return items.flatMap((i) => [i, ...flatten(i.children)]);
 }
@@ -96,6 +177,11 @@ function TreeNode({ item, depth, selectedId, onSelect }: {
   item: LearningItemTree; depth: number; selectedId: number | null; onSelect: (i: LearningItemTree) => void;
 }) {
   const locked = !item.unlocked;
+  const hasChildren = item.children.length > 0;
+  // Развёрнуто по умолчанию — прежнее поведение (все узлы всегда видны),
+  // стрелка только добавляет возможность свернуть, не меняет дефолт.
+  const [open, setOpen] = useState(true);
+
   return (
     <>
       <ListItemButton
@@ -114,8 +200,16 @@ function TreeNode({ item, depth, selectedId, onSelect }: {
           primaryTypographyProps={{ fontSize: '0.9rem', fontWeight: 500 }}
           secondaryTypographyProps={{ fontSize: '0.75rem' }}
         />
+        {hasChildren && (
+          <ListItemIcon
+            sx={{ minWidth: 24, justifyContent: 'flex-end', cursor: 'pointer' }}
+            onClick={(e) => { e.stopPropagation(); setOpen((v) => !v); }}
+          >
+            {open ? <ExpandLess fontSize="small" /> : <ExpandMore fontSize="small" />}
+          </ListItemIcon>
+        )}
       </ListItemButton>
-      {item.children.map((c) => (
+      {hasChildren && open && item.children.map((c) => (
         <TreeNode key={c.id} item={c} depth={depth + 1} selectedId={selectedId} onSelect={onSelect} />
       ))}
     </>
@@ -166,10 +260,17 @@ export default function CoursePage() {
     setSubmission(null);
     setHistory([]);
     setProblem(null);
+    // Иначе в редакторе оставался код предыдущей задачи — ниже, после
+    // загрузки problem, подставляется черновик/шаблон именно этой задачи.
+    setCode('');
+    setStdin('');
     api.setLastPosition(Number(courseId), item.id).catch(() => {});
     if (item.type === 'task' && item.problem_revision_id) {
       api.mySubmissions(item.problem_revision_id).then(setHistory).catch(() => {});
-      api.getProblem(item.problem_revision_id).then(setProblem).catch((e) => setError(e.message));
+      api.getProblem(item.problem_revision_id).then((p) => {
+        setProblem(p);
+        setCode(p.draft_code ?? p.template_code ?? '');
+      }).catch((e) => setError(e.message));
     }
   };
 
@@ -234,6 +335,8 @@ export default function CoursePage() {
         <Box sx={{ flex: 1, minWidth: 0 }}>
           {selected && selected.type === 'snap_task' ? (
             <SnapTaskView item={selected} />
+          ) : selected && selected.type === 'quiz' ? (
+            <QuizView key={selected.id} item={selected} />
           ) : (
           <Container maxWidth="md" sx={{ py: 4 }}>
             {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}

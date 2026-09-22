@@ -192,6 +192,11 @@ class LearningItem(Base):
     # Snap! в них не участвует — она одна и статична на весь элемент, шаги
     # листают только текст инструкции слева.
     steps = Column(JSON, nullable=True)
+    # Вопросы для type=quiz: [{"text": str, "options": [{"text": str, "correct": bool}]}, ...].
+    # Один тип вопроса — несколько правильных ответов (checkbox). Живут прямо
+    # на элементе, не в отдельном банке — переиспользование между тестами не
+    # нужно (решение владельца продукта 2026-09-23).
+    quiz_questions = Column(JSON, nullable=True)
     # Архивация каскадится на все дочерние узлы в момент действия (см.
     # app/services/tree_rules.py: set_item_archived) — простой флаг, не
     # "скрыт, если у предка is_archived", чтобы не пересчитывать видимость
@@ -306,6 +311,26 @@ class Submission(Base):
 
     user = relationship("User", back_populates="submissions")
     problem_revision = relationship("ProblemRevision")
+
+
+class QuizAttempt(Base):
+    """Попытка прохождения теста (type=quiz) — счёт (0..100, доля верно
+    отвеченных вопросов) считается сразу и синхронно (не через очередь
+    воркера, как у задач — сравнение вариантов ответа не требует песочницы)."""
+
+    __tablename__ = "quiz_attempts"
+
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    item_id = Column(Integer, ForeignKey("learning_items.id"), nullable=False, index=True)
+    # [[индексы выбранных вариантов по вопросу 0], [по вопросу 1], ...] —
+    # порядок соответствует item.quiz_questions на момент попытки.
+    answers = Column(JSON, nullable=False)
+    score = Column(Float, nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    user = relationship("User")
+    item = relationship("LearningItem")
 
 
 class Progress(Base):

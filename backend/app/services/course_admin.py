@@ -16,9 +16,11 @@ from app.models import (
     Course,
     CourseStatus,
     CourseVersion,
+    Draft,
     LearningItem,
     LearningItemType,
     ProblemRevision,
+    QuizAttempt,
     Submission,
     SubmissionStatus,
     User,
@@ -37,7 +39,12 @@ from app.schemas import (
     SubmissionReviewOut,
 )
 from app.services.lms_client import notify_course_webhook
-from app.services.progress_calc import is_item_unlocked, resolve_official_score
+from app.services.progress_calc import (
+    is_item_unlocked,
+    recompute_progress_for_quiz_attempt,
+    resolve_official_quiz_score,
+    resolve_official_score,
+)
 from app.services.tree_rules import validate_parent
 
 
@@ -128,19 +135,39 @@ def build_tree(
     return roots
 
 
+def _strip_quiz_answers(nodes: list[LearningItemTree]) -> None:
+    """Правильные ответы (QuizOption.correct) не должны доходить до ученика
+    ДО отправки попытки — иначе можно просто открыть вкладку "Сеть" и
+    подсмотреть их в ответе дерева курса. LearningItemTree — общая модель
+    для методиста и ученика, поэтому чистим её здесь, а не отдельной схемой."""
+    for node in nodes:
+        # quiz_questions заполнено только у type=quiz — проверяем сам факт
+        # наличия данных, а не сравниваем node.type с "quiz": на уже
+        # материализованном Pydantic-узле type может остаться экземпляром
+        # LearningItemType (str-enum), а не гарантированно plain str.
+        if node.quiz_questions:
+            for q in node.quiz_questions:
+                for opt in q.options:
+                    opt.correct = False
+        _strip_quiz_answers(node.children)
+
+
 def build_student_tree(db: Session, user_id: int, items: list[LearningItem]) -> list[LearningItemTree]:
     items_by_id = {i.id: i for i in items}
     unlocked_ids = {i.id for i in items if is_item_unlocked(db, user_id, i, items_by_id)}
     completed_ids = {
         i.id for i in items
-        if i.type == LearningItemType.TASK and i.problem_revision_id
-        and (resolve_official_score(db, user_id, i.problem_revision_id) or 0) > 0
+        if (i.type == LearningItemType.TASK and i.problem_revision_id
+            and (resolve_official_score(db, user_id, i.problem_revision_id) or 0) > 0)
+        or (i.type == LearningItemType.QUIZ and (resolve_official_quiz_score(db, user_id, i.id) or 0) > 0)
     }
     # Архивация каскадится на всё поддерево при самом действии (см.
     # set_item_archived), поэтому фильтровать по собственному is_archived
     # здесь достаточно — не может остаться неархивный потомок архивного узла.
     visible_items = [i for i in items if not i.is_archived]
-    return build_tree(visible_items, unlocked_ids, completed_ids)
+    tree = build_tree(visible_items, unlocked_ids, completed_ids)
+    _strip_quiz_answers(tree)
+    return tree
 
 
 def create_course(db: Session, payload: CourseCreate, created_by_id: int | None) -> Course:
@@ -251,11 +278,20 @@ def update_task(db: Session, problem_revision_id: int, payload: ProblemRevisionC
     return task
 
 
-def to_student_problem_out(task: ProblemRevision) -> ProblemRevisionStudentOut:
+def to_student_problem_out(db: Session, task: ProblemRevision, user: User) -> ProblemRevisionStudentOut:
     """STU-003: студент не должен получить вход/эталонный вывод скрытых
     тестов (иначе можно захардкодить решение под конкретный скрытый набор,
-    не решая задачу) — отдаём только is_hidden=False."""
+    не решая задачу) — отдаём только is_hidden=False.
+
+    IDE-002: вместе с условием отдаём последний сохранённый код студента по
+    ЭТОЙ задаче (Draft) — раньше нигде не читался, поэтому редактор на
+    фронте просто оставлял то, что было напечатано для предыдущей задачи."""
     visible = [ProblemTestOut(**t) for t in (task.tests or []) if not t.get("is_hidden")]
+    draft = (
+        db.query(Draft)
+        .filter(Draft.user_id == user.id, Draft.problem_revision_id == task.id)
+        .first()
+    )
     return ProblemRevisionStudentOut(
         id=task.id,
         title=task.title,
@@ -268,6 +304,47 @@ def to_student_problem_out(task: ProblemRevision) -> ProblemRevisionStudentOut:
         language=task.language,
         allowed_libraries=task.allowed_libraries,
         visible_tests=visible,
+        template_code=task.template_code,
+        draft_code=draft.code if draft else None,
+    )
+
+
+def _score_quiz_attempt(questions: list[dict], answers: list[list[int]]) -> float:
+    """Вопрос засчитан, только если отмечено ровно множество правильных
+    вариантов — не больше и не меньше (иначе можно набрать балл, отметив
+    вообще все варианты). Итог — % полностью верно отвеченных вопросов."""
+    if not questions:
+        return 0.0
+    correct_count = 0
+    for i, q in enumerate(questions):
+        correct_indices = {j for j, opt in enumerate(q.get("options") or []) if opt.get("correct")}
+        selected_indices = set(answers[i]) if i < len(answers) else set()
+        if selected_indices == correct_indices:
+            correct_count += 1
+    return round(100 * correct_count / len(questions), 2)
+
+
+def submit_quiz_attempt(db: Session, item_id: int, user_id: int, answers: list[list[int]]) -> QuizAttempt:
+    item = db.query(LearningItem).filter(LearningItem.id == item_id).first()
+    if not item or item.type != LearningItemType.QUIZ:
+        raise HTTPException(status_code=404, detail="Тест не найден")
+
+    score = _score_quiz_attempt(item.quiz_questions or [], answers)
+    attempt = QuizAttempt(user_id=user_id, item_id=item_id, answers=answers, score=score)
+    db.add(attempt)
+    db.commit()
+    db.refresh(attempt)
+
+    recompute_progress_for_quiz_attempt(db, attempt)  # аналог GRD-005 для теста
+    return attempt
+
+
+def get_quiz_attempts(db: Session, item_id: int, user_id: int) -> list[QuizAttempt]:
+    return (
+        db.query(QuizAttempt)
+        .filter(QuizAttempt.item_id == item_id, QuizAttempt.user_id == user_id)
+        .order_by(QuizAttempt.created_at.desc())
+        .all()
     )
 
 
@@ -283,6 +360,8 @@ def create_item(db: Session, course_id: int, payload: LearningItemCreate) -> Lea
         raise HTTPException(status_code=422, detail="Для элемента типа task нужен problem_revision_id")
     if item_type == LearningItemType.SNAP_TASK and not payload.steps:
         raise HTTPException(status_code=422, detail="Для элемента типа snap_task нужен хотя бы один этап (steps)")
+    if item_type == LearningItemType.QUIZ and not payload.quiz_questions:
+        raise HTTPException(status_code=422, detail="Для элемента типа quiz нужен хотя бы один вопрос (quiz_questions)")
 
     parent: Optional[LearningItem] = None
     if payload.parent_id is not None:
@@ -309,6 +388,7 @@ def create_item(db: Session, course_id: int, payload: LearningItemCreate) -> Lea
         unlock_rules=payload.unlock_rules,
         problem_revision_id=payload.problem_revision_id,
         steps=[s.model_dump() for s in payload.steps] if payload.steps else None,
+        quiz_questions=[q.model_dump() for q in payload.quiz_questions] if payload.quiz_questions else None,
     )
     db.add(item)
     db.commit()

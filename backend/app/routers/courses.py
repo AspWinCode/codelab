@@ -24,6 +24,8 @@ from app.schemas import (
     ProblemRevisionCreate,
     ProblemRevisionOut,
     ProblemRevisionStudentOut,
+    QuizAttemptCreate,
+    QuizAttemptOut,
     RerunSubmissionsIn,
     RerunSubmissionsOut,
 )
@@ -90,7 +92,24 @@ def get_problem_for_student(problem_revision_id: int, db: Session = Depends(get_
     вообще не отдавалось ученику: CoursePage показывал только редактор кода,
     без условия задачи."""
     task = course_admin.get_task_or_404(db, problem_revision_id)
-    return course_admin.to_student_problem_out(task)
+    return course_admin.to_student_problem_out(db, task, user)
+
+
+@router.post("/quizzes/{item_id}/attempts", response_model=QuizAttemptOut)
+def submit_quiz_attempt(
+    item_id: int,
+    payload: QuizAttemptCreate,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """Проверка синхронная — сравнение отмеченных вариантов с эталоном не
+    требует песочницы (в отличие от кода в submissions.py/app.worker)."""
+    return course_admin.submit_quiz_attempt(db, item_id, user.id, payload.answers)
+
+
+@router.get("/quizzes/{item_id}/attempts", response_model=list[QuizAttemptOut])
+def my_quiz_attempts(item_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    return course_admin.get_quiz_attempts(db, item_id, user.id)
 
 
 @router.post("/{course_id}/items", response_model=LearningItemOut)
