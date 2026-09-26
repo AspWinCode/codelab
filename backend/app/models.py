@@ -49,6 +49,10 @@ class LearningItemType(str, enum.Enum):
     # пошаговая инструкция (см. LearningItem.steps), справа постоянный iframe
     # на snap.tirskix.space — редактор не перезагружается между шагами.
     SNAP_TASK = "snap_task"
+    # GDevelop-задание — тот же паттерн, что Snap! (шаги слева, статичный
+    # iframe справа), только на gdevelop.tirskix.space. Тоже без автопроверки
+    # пока (см. LearningItem.steps, общий для обоих типов).
+    GDEVELOP_TASK = "gdevelop_task"
     # Проект с ручной проверкой: ученик прикрепляет один или несколько файлов
     # (исходный код и т.п.), тренер их скачивает, комментирует по файлу,
     # принимает/отправляет на доработку и ставит оценку. См. ProjectSubmission.

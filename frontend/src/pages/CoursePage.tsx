@@ -17,7 +17,7 @@ const DRAWER_WIDTH = 300;
 const TYPE_LABEL: Record<string, string> = {
   theory: 'Теория', video: 'Видео', file: 'Файл', link: 'Ссылка',
   quiz: 'Тест', task: 'Задача', manual: 'Ручное задание', checkpoint: 'Контрольная точка',
-  snap_task: 'Задание Snap!', project: 'Проект',
+  snap_task: 'Задание Snap!', gdevelop_task: 'Задание GDevelop', project: 'Проект',
 };
 
 const PROJECT_STATUS_LABEL: Record<string, string> = {
@@ -206,15 +206,20 @@ function ProjectView({ item }: { item: LearningItemTree }) {
 }
 
 const SNAP_URL = 'https://snap.tirskix.space';
+const GDEVELOP_URL = 'https://gdevelop.tirskix.space';
 
 /** Слева — пошаговая инструкция (стрелки листают steps), справа — статичный
- * iframe Snap!. iframe рендерится безусловно на каждый рендер компонента,
- * поэтому не перемонтируется при листании шагов или переключении полноэкранного
- * режима — сохраняется состояние проекта ученика внутри Snap!. */
-function SnapTaskView({ item }: { item: LearningItemTree }) {
+ * iframe редактора (Snap!/GDevelop). iframe рендерится безусловно на каждый
+ * рендер компонента, поэтому не перемонтируется при листании шагов или
+ * переключении полноэкранного режима — сохраняется состояние проекта ученика
+ * внутри редактора. Общий для snap_task и gdevelop_task — оба устроены
+ * одинаково, различаются только адресом редактора и подписями. */
+function StepIframeTaskView({ item, iframeUrl, iframeTitle, expandLabel }: {
+  item: LearningItemTree; iframeUrl: string; iframeTitle: string; expandLabel: string;
+}) {
   const steps = item.steps || [];
   const [stepIndex, setStepIndex] = useState(0);
-  const [snapExpanded, setSnapExpanded] = useState(false);
+  const [expanded, setExpanded] = useState(false);
 
   useEffect(() => { setStepIndex(0); }, [item.id]);
 
@@ -224,11 +229,11 @@ function SnapTaskView({ item }: { item: LearningItemTree }) {
     <Box sx={{ display: 'flex', height: 'calc(100vh - 64px)', width: '100%' }}>
       <Box
         sx={{
-          width: snapExpanded ? 0 : { xs: '100%', md: '42%' },
-          minWidth: snapExpanded ? 0 : { md: 340 },
+          width: expanded ? 0 : { xs: '100%', md: '42%' },
+          minWidth: expanded ? 0 : { md: 340 },
           overflow: 'hidden',
           transition: 'width 0.2s ease',
-          borderRight: snapExpanded ? 'none' : '1px solid',
+          borderRight: expanded ? 'none' : '1px solid',
           borderColor: 'divider',
           display: 'flex',
           flexDirection: 'column',
@@ -255,16 +260,16 @@ function SnapTaskView({ item }: { item: LearningItemTree }) {
         <Stack direction="row" justifyContent="flex-end" sx={{ px: 1.5, py: 1, borderBottom: '1px solid', borderColor: 'divider' }}>
           <Button
             size="small"
-            startIcon={snapExpanded ? <CloseFullscreen fontSize="small" /> : <OpenInFull fontSize="small" />}
-            onClick={() => setSnapExpanded((v) => !v)}
+            startIcon={expanded ? <CloseFullscreen fontSize="small" /> : <OpenInFull fontSize="small" />}
+            onClick={() => setExpanded((v) => !v)}
           >
-            {snapExpanded ? 'Показать инструкцию' : 'Snap! на весь экран'}
+            {expanded ? 'Показать инструкцию' : expandLabel}
           </Button>
         </Stack>
         <Box sx={{ flex: 1 }}>
           <iframe
-            src={SNAP_URL}
-            title="Snap!"
+            src={iframeUrl}
+            title={iframeTitle}
             style={{ width: '100%', height: '100%', border: 'none', display: 'block' }}
           />
         </Box>
@@ -519,7 +524,9 @@ export default function CoursePage() {
 
         <Box sx={{ flex: 1, minWidth: 0 }}>
           {selected && selected.type === 'snap_task' ? (
-            <SnapTaskView item={selected} />
+            <StepIframeTaskView item={selected} iframeUrl={SNAP_URL} iframeTitle="Snap!" expandLabel="Snap! на весь экран" />
+          ) : selected && selected.type === 'gdevelop_task' ? (
+            <StepIframeTaskView item={selected} iframeUrl={GDEVELOP_URL} iframeTitle="GDevelop" expandLabel="GDevelop на весь экран" />
           ) : selected && selected.type === 'quiz' ? (
             <QuizView key={selected.id} item={selected} />
           ) : (
