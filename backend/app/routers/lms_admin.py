@@ -11,6 +11,7 @@ learning-portal-main — менять пути и подпись запроса 
 стороной.
 """
 from fastapi import APIRouter, Depends, File as FastAPIFile, Header, HTTPException, Query, UploadFile, status
+from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
 from app.database import get_db
@@ -34,6 +35,11 @@ from app.schemas import (
     ManualGradeIn,
     ProblemRevisionCreate,
     ProblemRevisionOut,
+    ProjectFileCommentIn,
+    ProjectFileCommentOut,
+    ProjectReviewIn,
+    ProjectSubmissionOut,
+    ProjectSubmissionReviewOut,
     RerunSubmissionsIn,
     RerunSubmissionsOut,
     SubmissionOut,
@@ -41,9 +47,10 @@ from app.schemas import (
     UploadOut,
 )
 from app.security import verify_lms_signature
-from app.services import admin_status, analytics, course_admin
+from app.services import admin_status, analytics, course_admin, project_admin
 from app.services.environments import list_environments
 from app.services.progress_calc import apply_manual_grade
+from app.services.project_files import project_file_path
 from app.services.uploads import save_upload
 
 router = APIRouter()
@@ -307,6 +314,95 @@ def get_course_analytics(course_id: int, db: Session = Depends(get_db), staff: U
         overview=analytics.course_overview(db, course_id),
         tasks=analytics.task_difficulty(db, course_id),
     )
+
+
+@router.get("/courses/{course_id}/projects/{item_id}/submissions", response_model=list[ProjectSubmissionReviewOut])
+def list_project_submissions(
+    course_id: int, item_id: int, db: Session = Depends(get_db), staff: User = Depends(resolve_staff_user),
+):
+    """Ростер сдач проекта — по строке на ученика (последняя попытка), с
+    ученика без ни одной попытки заводится пустой DRAFT (см.
+    project_admin._ensure_roster_submissions), чтобы тренер мог напомнить и
+    тем, кто ещё не начинал. RBAC-002: методисту — только свои курсы; фильтр
+    по группе тренера — на портале (learning-portal-main/routers/codelab.py)."""
+    if staff.role == "methodist":
+        course_admin.ensure_course_owner(course_admin.get_course_or_404(db, course_id), staff)
+
+    item = project_admin.get_project_item_or_404(db, item_id)
+    actual_course = project_admin.get_course_for_project_item(db, item)
+    if not actual_course or actual_course.id != course_id:
+        raise HTTPException(status_code=404, detail="Проект не относится к указанному курсу")
+
+    return project_admin.list_project_submissions(db, item_id)
+
+
+@router.get("/projects/submissions/{submission_id}", response_model=ProjectSubmissionOut)
+def get_project_submission(
+    submission_id: int, db: Session = Depends(get_db), staff: User = Depends(resolve_staff_user),
+):
+    course = project_admin.get_course_for_project_submission(db, submission_id)
+    if course and staff.role == "methodist":
+        course_admin.ensure_course_owner(course, staff)
+    return project_admin.get_submission_detail(db, submission_id)
+
+
+@router.get("/projects/files/{file_id}/download")
+def download_project_file(
+    file_id: int, db: Session = Depends(get_db), staff: User = Depends(resolve_staff_user),
+):
+    f = project_admin.get_file_or_404(db, file_id)
+    course = project_admin.get_course_for_project_submission(db, f.submission_id)
+    if course and staff.role == "methodist":
+        course_admin.ensure_course_owner(course, staff)
+
+    path = project_file_path(f.stored_name)
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="Файл не найден на диске")
+    return FileResponse(path, media_type=f.content_type, filename=f.original_filename)
+
+
+@router.post("/projects/files/{file_id}/comments", response_model=ProjectFileCommentOut, status_code=201)
+def comment_project_file(
+    file_id: int, payload: ProjectFileCommentIn, db: Session = Depends(get_db), staff: User = Depends(resolve_staff_user),
+):
+    course = project_admin.get_course_for_project_submission(
+        db, project_admin.get_file_or_404(db, file_id).submission_id,
+    )
+    if course and staff.role == "methodist":
+        course_admin.ensure_course_owner(course, staff)
+
+    comment = project_admin.add_file_comment(db, file_id, staff.id, payload.body)
+    return ProjectFileCommentOut(
+        id=comment.id, author_id=comment.author_id, author_full_name=staff.full_name,
+        body=comment.body, created_at=comment.created_at,
+    )
+
+
+@router.put("/projects/submissions/{submission_id}/review", response_model=ProjectSubmissionOut)
+def review_project_submission(
+    submission_id: int, payload: ProjectReviewIn, db: Session = Depends(get_db), staff: User = Depends(resolve_staff_user),
+):
+    """GRD-004-аналог для проектов: комментарий обязателен (см.
+    ProjectReviewIn), оценка обязательна при decision=accepted."""
+    course = project_admin.get_course_for_project_submission(db, submission_id)
+    if course and staff.role == "methodist":
+        course_admin.ensure_course_owner(course, staff)
+
+    submission = project_admin.apply_project_review(db, submission_id, payload, staff.id)
+    item = project_admin.get_project_item_or_404(db, submission.learning_item_id)
+    return project_admin.to_submission_out(db, item, submission)
+
+
+@router.post("/projects/submissions/{submission_id}/remind")
+def remind_project_submission(
+    submission_id: int, db: Session = Depends(get_db), staff: User = Depends(resolve_staff_user),
+):
+    course = project_admin.get_course_for_project_submission(db, submission_id)
+    if course and staff.role == "methodist":
+        course_admin.ensure_course_owner(course, staff)
+
+    project_admin.send_reminder(db, submission_id)
+    return {"ok": True}
 
 
 @router.get("/admin/status", response_model=AdminSystemStatusOut)

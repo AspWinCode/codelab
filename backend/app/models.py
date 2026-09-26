@@ -49,6 +49,10 @@ class LearningItemType(str, enum.Enum):
     # пошаговая инструкция (см. LearningItem.steps), справа постоянный iframe
     # на snap.tirskix.space — редактор не перезагружается между шагами.
     SNAP_TASK = "snap_task"
+    # Проект с ручной проверкой: ученик прикрепляет один или несколько файлов
+    # (исходный код и т.п.), тренер их скачивает, комментирует по файлу,
+    # принимает/отправляет на доработку и ставит оценку. См. ProjectSubmission.
+    PROJECT = "project"
     # Структурные узлы дерева курса — организационная иерархия без
     # собственного контента, ровно 4 уровня (см. app/services/tree_rules.py):
     # модуль → подмодуль → тема → подтема. Контентные типы выше могут лежать
@@ -188,6 +192,9 @@ class LearningItem(Base):
     # Условия открытия — например {"after_item_id": 12, "min_score": 60} (LMS-004).
     unlock_rules = Column(JSON, nullable=False, default=dict)
     problem_revision_id = Column(Integer, ForeignKey("problem_revisions.id"), nullable=True)
+    # Срок сдачи для type=project — используется для бейджа "просрочено" у
+    # ученика и в списке сдач тренера; для остальных типов не заполняется.
+    due_at = Column(DateTime(timezone=True), nullable=True)
     # Шаги для type=snap_task: [{"title": str, "content": html}, ...]. Панель
     # Snap! в них не участвует — она одна и статична на весь элемент, шаги
     # листают только текст инструкции слева.
@@ -348,9 +355,19 @@ class NotificationType(str, enum.Enum):
     COURSE_ASSIGNED = "course_assigned"
     DEADLINE_APPROACHING = "deadline_approaching"
     MANUAL_REVIEW_RESULT = "manual_review_result"
+    # Результат ревью проекта (принят/на доработку) — как MANUAL_REVIEW_RESULT,
+    # обязательное: ученик должен узнать вердикт по своей сдаче.
+    PROJECT_REVIEWED = "project_reviewed"
+    # Ручное напоминание тренера "не забудь сдать"/"просрочено" — необязательное,
+    # как DEADLINE_APPROACHING.
+    PROJECT_REMINDER = "project_reminder"
 
 
-MANDATORY_NOTIFICATION_TYPES = {NotificationType.COURSE_ASSIGNED, NotificationType.MANUAL_REVIEW_RESULT}
+MANDATORY_NOTIFICATION_TYPES = {
+    NotificationType.COURSE_ASSIGNED,
+    NotificationType.MANUAL_REVIEW_RESULT,
+    NotificationType.PROJECT_REVIEWED,
+}
 
 
 class Notification(Base):
@@ -383,3 +400,66 @@ class NotificationPreference(Base):
     enabled = Column(Boolean, nullable=False, default=True)
 
     user = relationship("User")
+
+
+class ProjectSubmissionStatus(str, enum.Enum):
+    DRAFT = "draft"  # ученик прикрепляет файлы, ещё не отправил
+    SUBMITTED = "submitted"  # отправлено, ждёт проверки тренера
+    NEEDS_REVISION = "needs_revision"  # тренер вернул на доработку
+    ACCEPTED = "accepted"  # тренер принял работу
+
+
+class ProjectSubmission(Base):
+    """Сдача проекта (type=project): в отличие от Submission (код на
+    авто-проверку по ProblemRevision), тут — набор произвольных файлов на
+    ручную проверку тренером. "На доработку" не переиспользует ту же строку —
+    заводит новую попытку (attempt_number+1), старая остаётся в истории."""
+
+    __tablename__ = "project_submissions"
+
+    id = Column(Integer, primary_key=True)
+    learning_item_id = Column(Integer, ForeignKey("learning_items.id"), nullable=False, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    attempt_number = Column(Integer, nullable=False, default=1)
+    status = Column(SQLEnum(ProjectSubmissionStatus), nullable=False, default=ProjectSubmissionStatus.DRAFT)
+    submitted_at = Column(DateTime(timezone=True), nullable=True)
+    reviewed_at = Column(DateTime(timezone=True), nullable=True)
+    reviewed_by_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    score = Column(Float, nullable=True)
+    review_comment = Column(Text, nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    learning_item = relationship("LearningItem")
+    user = relationship("User", foreign_keys=[user_id])
+    reviewed_by = relationship("User", foreign_keys=[reviewed_by_id])
+    files = relationship("ProjectFile", back_populates="submission", order_by="ProjectFile.uploaded_at")
+
+
+class ProjectFile(Base):
+    __tablename__ = "project_files"
+
+    id = Column(Integer, primary_key=True)
+    submission_id = Column(Integer, ForeignKey("project_submissions.id"), nullable=False, index=True)
+    original_filename = Column(String(255), nullable=False)
+    # Имя на диске — случайное, не то, что прислал ученик (как в
+    # services/uploads.py::save_upload, SEC-005/SEC-006).
+    stored_name = Column(String(64), nullable=False)
+    content_type = Column(String(128), nullable=False)
+    size = Column(Integer, nullable=False)
+    uploaded_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    submission = relationship("ProjectSubmission", back_populates="files")
+    comments = relationship("ProjectFileComment", back_populates="file", order_by="ProjectFileComment.created_at")
+
+
+class ProjectFileComment(Base):
+    __tablename__ = "project_file_comments"
+
+    id = Column(Integer, primary_key=True)
+    file_id = Column(Integer, ForeignKey("project_files.id"), nullable=False, index=True)
+    author_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    body = Column(Text, nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    file = relationship("ProjectFile", back_populates="comments")
+    author = relationship("User")

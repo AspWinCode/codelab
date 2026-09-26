@@ -68,6 +68,49 @@ export interface LearningItem {
   unlock_rules: Record<string, unknown>;
   problem_revision_id: number | null;
   steps: SnapStep[] | null;
+  due_at: string | null;
+}
+
+// Проект с ручной проверкой (type=project): ученик прикрепляет файлы,
+// тренер комментирует/принимает/отправляет на доработку — см. README Codelab.
+export interface ProjectFileComment {
+  id: number;
+  author_id: number;
+  author_full_name: string;
+  body: string;
+  created_at: string;
+}
+
+export interface ProjectFile {
+  id: number;
+  original_filename: string;
+  content_type: string;
+  size: number;
+  uploaded_at: string;
+  comments: ProjectFileComment[];
+}
+
+export interface ProjectAttemptSummary {
+  id: number;
+  attempt_number: number;
+  status: string;
+  submitted_at: string | null;
+  score: number | null;
+}
+
+export interface ProjectSubmission {
+  id: number;
+  learning_item_id: number;
+  attempt_number: number;
+  status: 'draft' | 'submitted' | 'needs_revision' | 'accepted';
+  submitted_at: string | null;
+  reviewed_at: string | null;
+  score: number | null;
+  review_comment: string | null;
+  due_at: string | null;
+  is_overdue: boolean;
+  files: ProjectFile[];
+  history: ProjectAttemptSummary[];
 }
 
 export interface LearningItemTree extends LearningItem {
@@ -185,6 +228,22 @@ export const api = {
       body: JSON.stringify({ problem_revision_id, code }),
     }),
   getSubmission: (id: number) => request<Submission>(`/submissions/${id}`),
+
+  getProjectSubmission: (itemId: number) => request<ProjectSubmission>(`/projects/items/${itemId}/submission`),
+  uploadProjectFile: async (itemId: number, file: File): Promise<ProjectFile> => {
+    const form = new FormData();
+    form.append('file', file);
+    const res = await fetch(`${BASE}/projects/items/${itemId}/files`, { method: 'POST', credentials: 'include', body: form });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      throw new Error(body.detail || `Ошибка ${res.status}`);
+    }
+    return res.json();
+  },
+  deleteProjectFile: (fileId: number) => request(`/projects/files/${fileId}`, { method: 'DELETE' }),
+  submitProjectSubmission: (submissionId: number) =>
+    request<ProjectSubmission>(`/projects/submissions/${submissionId}/submit`, { method: 'POST' }),
+  projectFileDownloadUrl: (fileId: number) => `${BASE}/projects/files/${fileId}/download`,
 
   notifications: (unreadOnly = false) =>
     request<Notification[]>(`/me/notifications${unreadOnly ? '?unread_only=true' : ''}`),

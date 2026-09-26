@@ -309,6 +309,7 @@ def create_item(db: Session, course_id: int, payload: LearningItemCreate) -> Lea
         unlock_rules=payload.unlock_rules,
         problem_revision_id=payload.problem_revision_id,
         steps=[s.model_dump() for s in payload.steps] if payload.steps else None,
+        due_at=payload.due_at,
     )
     db.add(item)
     db.commit()
@@ -430,6 +431,7 @@ async def publish_course(db: Session, course_id: int, actor_id: int | None) -> C
             problem_revision_id=old.problem_revision_id,
             is_archived=old.is_archived,
             steps=old.steps,
+            due_at=old.due_at,
         )
         db.add(clone)
         db.flush()

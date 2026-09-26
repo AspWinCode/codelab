@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import List, Optional
 
-from pydantic import BaseModel, ConfigDict, field_validator
+from pydantic import BaseModel, ConfigDict, field_validator, model_validator
 
 from app.services.environments import ENVIRONMENTS
 
@@ -121,7 +121,7 @@ class LearningItemCreate(BaseModel):
     app/services/tree_rules.py); остальные типы — контент, может лежать на
     любом из этих уровней или в корне курса."""
 
-    type: str  # theory|video|file|link|quiz|task|manual|checkpoint|snap_task|module|submodule|topic|subtopic
+    type: str  # theory|video|file|link|quiz|task|manual|checkpoint|snap_task|project|module|submodule|topic|subtopic
     title: str
     description: Optional[str] = None
     content: Optional[str] = None
@@ -132,6 +132,8 @@ class LearningItemCreate(BaseModel):
     unlock_rules: dict = {}
     problem_revision_id: Optional[int] = None
     steps: Optional[List[SnapStep]] = None
+    # Только для type="project" — срок сдачи (см. ProjectSubmission).
+    due_at: Optional[datetime] = None
 
 
 class LearningItemUpdate(BaseModel):
@@ -144,6 +146,7 @@ class LearningItemUpdate(BaseModel):
     position: Optional[int] = None
     unlock_rules: Optional[dict] = None
     steps: Optional[List[SnapStep]] = None
+    due_at: Optional[datetime] = None
 
 
 class LearningItemOut(BaseModel):
@@ -160,6 +163,7 @@ class LearningItemOut(BaseModel):
     problem_revision_id: Optional[int]
     is_archived: bool = False
     steps: Optional[List[SnapStep]] = None
+    due_at: Optional[datetime] = None
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -401,6 +405,90 @@ class AdminUserBlockIn(BaseModel):
 
 class AdminLoginEventOut(BaseModel):
     created_at: datetime
+
+
+class ProjectFileCommentOut(BaseModel):
+    id: int
+    author_id: int
+    author_full_name: str
+    body: str
+    created_at: datetime
+
+
+class ProjectFileOut(BaseModel):
+    id: int
+    original_filename: str
+    content_type: str
+    size: int
+    uploaded_at: datetime
+    comments: List[ProjectFileCommentOut] = []
+
+
+class ProjectAttemptSummary(BaseModel):
+    """Короткая карточка прошлой попытки — для истории пересдач."""
+
+    id: int
+    attempt_number: int
+    status: str
+    submitted_at: Optional[datetime]
+    score: Optional[float]
+
+
+class ProjectSubmissionOut(BaseModel):
+    """Ученический и штатный (staff) взгляд на попытку сдачи проекта.
+    is_overdue считается на бэкенде относительно LearningItem.due_at, чтобы
+    не дублировать логику дат на фронте."""
+
+    id: int
+    learning_item_id: int
+    attempt_number: int
+    status: str
+    submitted_at: Optional[datetime]
+    reviewed_at: Optional[datetime]
+    score: Optional[float]
+    review_comment: Optional[str]
+    due_at: Optional[datetime]
+    is_overdue: bool
+    files: List[ProjectFileOut] = []
+    history: List[ProjectAttemptSummary] = []
+
+
+class ProjectSubmissionReviewOut(ProjectSubmissionOut):
+    """Строка в списке сдач курса для тренера/методиста — с данными ученика."""
+
+    student_external_ref: str
+    student_full_name: str
+    item_title: str
+
+
+class ProjectFileCommentIn(BaseModel):
+    body: str
+
+
+class ProjectReviewIn(BaseModel):
+    decision: str  # accepted | needs_revision
+    score: Optional[float] = None
+    comment: str
+
+    @field_validator("decision")
+    @classmethod
+    def _decision_must_be_known(cls, value: str) -> str:
+        if value not in ("accepted", "needs_revision"):
+            raise ValueError("decision должен быть 'accepted' или 'needs_revision'")
+        return value
+
+    @field_validator("comment")
+    @classmethod
+    def _comment_required(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("Комментарий обязателен при проверке проекта")
+        return value
+
+    @model_validator(mode="after")
+    def _score_required_when_accepted(self) -> "ProjectReviewIn":
+        if self.decision == "accepted" and self.score is None:
+            raise ValueError("При принятии работы нужно поставить оценку")
+        return self
 
 
 class EnvironmentOut(BaseModel):

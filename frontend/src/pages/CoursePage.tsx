@@ -5,7 +5,7 @@ import {
 } from '@mui/material';
 import { useEffect, useRef, useState } from 'react';
 import { useParams, useSearchParams } from 'react-router-dom';
-import { api, LearningItemTree, ProblemForStudent, RunResult, Submission } from '../api';
+import { api, LearningItemTree, ProblemForStudent, ProjectSubmission, RunResult, Submission } from '../api';
 import Layout from '../components/Layout';
 import { FONT_CODE } from '../theme';
 import { renderContentHtml } from '../utils/renderContent';
@@ -17,8 +17,193 @@ const DRAWER_WIDTH = 300;
 const TYPE_LABEL: Record<string, string> = {
   theory: 'Теория', video: 'Видео', file: 'Файл', link: 'Ссылка',
   quiz: 'Тест', task: 'Задача', manual: 'Ручное задание', checkpoint: 'Контрольная точка',
-  snap_task: 'Задание Snap!',
+  snap_task: 'Задание Snap!', project: 'Проект',
 };
+
+const PROJECT_STATUS_LABEL: Record<string, string> = {
+  draft: 'Черновик — не отправлено', submitted: 'Отправлено, ждёт проверки',
+  needs_revision: 'На доработке', accepted: 'Принято',
+};
+
+const PROJECT_STATUS_COLOR: Record<string, 'default' | 'info' | 'warning' | 'success'> = {
+  draft: 'default', submitted: 'info', needs_revision: 'warning', accepted: 'success',
+};
+
+function formatDateTime(iso: string): string {
+  return new Date(iso).toLocaleString('ru-RU');
+}
+
+/** Ученик прикрепляет файлы к проекту (произвольный код и т.п.), отправляет
+ * на проверку тренеру; "на доработку" не редактирует старую попытку — донос
+ * нового файла заводит следующую (см. app/services/project_admin.py в
+ * Codelab), поэтому после каждой загрузки состояние перечитывается целиком. */
+function ProjectView({ item }: { item: LearningItemTree }) {
+  const [submission, setSubmission] = useState<ProjectSubmission | null>(null);
+  const [error, setError] = useState('');
+  const [uploading, setUploading] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  const load = () => {
+    api.getProjectSubmission(item.id).then(setSubmission).catch((e) => setError(e.message));
+  };
+
+  useEffect(() => {
+    setError('');
+    setSubmission(null);
+    load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [item.id]);
+
+  const onFilesSelected = async (files: FileList | null) => {
+    if (!files || files.length === 0) return;
+    setUploading(true);
+    setError('');
+    try {
+      for (const file of Array.from(files)) {
+        await api.uploadProjectFile(item.id, file);
+      }
+      load();
+    } catch (e: any) {
+      setError(e.message);
+    } finally {
+      setUploading(false);
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    }
+  };
+
+  const removeFile = async (fileId: number) => {
+    setError('');
+    try {
+      await api.deleteProjectFile(fileId);
+      load();
+    } catch (e: any) {
+      setError(e.message);
+    }
+  };
+
+  const submitNow = async () => {
+    if (!submission) return;
+    setError('');
+    try {
+      setSubmission(await api.submitProjectSubmission(submission.id));
+    } catch (e: any) {
+      setError(e.message);
+    }
+  };
+
+  if (!submission) {
+    return (
+      <Box>
+        <Typography variant="h2" sx={{ mb: 2 }}>{item.title}</Typography>
+        {error && <Alert severity="error">{error}</Alert>}
+      </Box>
+    );
+  }
+
+  const canAttach = submission.status === 'draft' || submission.status === 'needs_revision';
+  const canDelete = submission.status === 'draft';
+  const canSubmit = submission.status === 'draft' && submission.files.length > 0;
+
+  return (
+    <Box>
+      <Typography variant="h2" sx={{ mb: 1 }}>{item.title}</Typography>
+      {(item.content || item.description) && (
+        <Box className="preview" sx={{ mb: 2 }} dangerouslySetInnerHTML={{ __html: renderContentHtml(item.content || item.description || '') }} />
+      )}
+
+      <Stack direction="row" spacing={1.5} alignItems="center" flexWrap="wrap" sx={{ mb: 2, rowGap: 1 }}>
+        <Chip size="small" color={PROJECT_STATUS_COLOR[submission.status]} label={PROJECT_STATUS_LABEL[submission.status] || submission.status} />
+        {submission.due_at && (
+          <Chip
+            size="small"
+            color={submission.is_overdue ? 'error' : 'default'}
+            label={`Срок сдачи: ${formatDateTime(submission.due_at)}${submission.is_overdue ? ' — просрочено' : ''}`}
+          />
+        )}
+        {submission.attempt_number > 1 && <Chip size="small" label={`Попытка ${submission.attempt_number}`} />}
+      </Stack>
+
+      {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
+
+      {submission.status === 'needs_revision' && (
+        <Alert severity="warning" sx={{ mb: 2 }}>
+          Тренер вернул работу на доработку. Прикрепите исправленный файл — это создаст новую попытку.
+        </Alert>
+      )}
+
+      <Typography variant="h3" sx={{ mb: 1 }}>Файлы</Typography>
+      <Stack spacing={1} sx={{ mb: 2 }}>
+        {submission.files.map((f) => (
+          <Box key={f.id} sx={{ border: '1px solid', borderColor: 'divider', borderRadius: 2, p: 1.5 }}>
+            <Stack direction="row" justifyContent="space-between" alignItems="center" flexWrap="wrap">
+              <Box>
+                <Typography variant="body2">{f.original_filename}</Typography>
+                <Typography variant="caption" color="text.secondary">
+                  {(f.size / 1024).toFixed(1)} КБ · {formatDateTime(f.uploaded_at)}
+                </Typography>
+              </Box>
+              <Stack direction="row" spacing={1}>
+                <Button size="small" href={api.projectFileDownloadUrl(f.id)} target="_blank" rel="noopener">Скачать</Button>
+                {canDelete && <Button size="small" color="error" onClick={() => removeFile(f.id)}>Удалить</Button>}
+              </Stack>
+            </Stack>
+            {f.comments.length > 0 && (
+              <>
+                <Divider sx={{ my: 1 }} />
+                <Stack spacing={0.5}>
+                  {f.comments.map((c) => (
+                    <Typography key={c.id} variant="body2" color="text.secondary">
+                      <b>{c.author_full_name}:</b> {c.body}
+                    </Typography>
+                  ))}
+                </Stack>
+              </>
+            )}
+          </Box>
+        ))}
+        {submission.files.length === 0 && (
+          <Typography variant="body2" color="text.secondary">Файлы ещё не прикреплены.</Typography>
+        )}
+      </Stack>
+
+      {canAttach && (
+        <Stack direction="row" spacing={1.5} sx={{ mb: 2 }}>
+          <Button variant="outlined" component="label" disabled={uploading}>
+            Прикрепить файл
+            <input ref={fileInputRef} type="file" hidden multiple onChange={(e) => onFilesSelected(e.target.files)} />
+          </Button>
+          {canSubmit && <Button variant="contained" onClick={submitNow}>Отправить на проверку</Button>}
+        </Stack>
+      )}
+
+      {submission.status !== 'draft' && submission.review_comment && (
+        <Box sx={{ mb: 2, p: 1.5, border: '1px solid', borderColor: 'divider', borderRadius: 2 }}>
+          <Typography variant="subtitle2">Комментарий тренера</Typography>
+          <Typography variant="body2" color="text.secondary">{submission.review_comment}</Typography>
+          {submission.score !== null && (
+            <Typography variant="body2" color="text.secondary">Оценка: {submission.score}</Typography>
+          )}
+        </Box>
+      )}
+
+      {submission.history.length > 0 && (
+        <Box sx={{ mt: 3 }}>
+          <Typography variant="h3" sx={{ mb: 1.5 }}>Предыдущие попытки</Typography>
+          <Stack spacing={1}>
+            {submission.history.map((h) => (
+              <Box key={h.id} sx={{ border: '1px solid', borderColor: 'divider', borderRadius: 2, p: 1.5 }}>
+                <Stack direction="row" justifyContent="space-between">
+                  <Typography variant="body2">Попытка {h.attempt_number} — {PROJECT_STATUS_LABEL[h.status] || h.status}</Typography>
+                  {h.score !== null && <Typography variant="body2">Оценка: {h.score}</Typography>}
+                </Stack>
+              </Box>
+            ))}
+          </Stack>
+        </Box>
+      )}
+    </Box>
+  );
+}
 
 const SNAP_URL = 'https://snap.tirskix.space';
 
@@ -239,12 +424,14 @@ export default function CoursePage() {
             {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
             {!selected && <Typography color="text.secondary">Выберите элемент курса слева.</Typography>}
 
-            {selected && selected.type !== 'task' && (
+            {selected && selected.type !== 'task' && selected.type !== 'project' && (
               <Box>
                 <Typography variant="h2" sx={{ mb: 2 }}>{selected.title}</Typography>
                 <Box className="preview" dangerouslySetInnerHTML={{ __html: renderContentHtml(selected.content || selected.description || '') }} />
               </Box>
             )}
+
+            {selected && selected.type === 'project' && <ProjectView item={selected} />}
 
             {selected && selected.type === 'task' && (
               <Box>

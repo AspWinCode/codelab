@@ -41,6 +41,22 @@ class Settings(BaseSettings):
     upload_allowed_document_ext: str = "pdf"
     upload_allowed_audio_ext: str = "mp3,wav"
 
+    # Файлы проектов (PRJ): исходный код и сопутствующие материалы ученика —
+    # отдельная приватная директория (НЕ под uploads_dir, который целиком
+    # смонтирован как статика в main.py, см. services/project_files.py),
+    # свой allowlist и лимит размера на файл.
+    project_uploads_dir: str = "uploads_private/projects"
+    upload_max_project_file_mb: int = 10
+    upload_allowed_project_ext: str = (
+        "py,js,jsx,ts,tsx,java,c,h,cpp,hpp,cs,go,rb,php,html,htm,css,scss,"
+        "json,md,txt,sql,kt,swift,rs,sh,bat,ps1,yml,yaml,xml,ipynb,zip"
+    )
+
+    @property
+    def upload_allowed_project_extensions(self) -> dict[str, int]:
+        limit = self.upload_max_project_file_mb * 1024 * 1024
+        return {ext.strip().lower(): limit for ext in self.upload_allowed_project_ext.split(",") if ext.strip()}
+
     @property
     def upload_allowed_extensions(self) -> dict[str, int]:
         """Расширение (без точки, lowercase) → лимит размера в байтах."""

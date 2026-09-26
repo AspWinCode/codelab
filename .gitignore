@@ -11,5 +11,6 @@ build/
 *.log
 .DS_Store
 backend/uploads/
+backend/uploads_private/
 *.tsbuildinfo
 *.db

@@ -5,7 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from app.config import settings
-from app.routers import auth, courses, dashboard, lms_admin, lms_integration, notifications, submissions, uploads
+from app.routers import auth, courses, dashboard, lms_admin, lms_integration, notifications, projects, submissions, uploads
 
 app = FastAPI(title="Codelab API", version="0.1.0")
 
@@ -27,6 +27,7 @@ app.include_router(uploads.router, prefix="/api/uploads", tags=["uploads"])
 app.include_router(dashboard.router, prefix="/api/me", tags=["dashboard"])
 app.include_router(notifications.router, prefix="/api/me", tags=["notifications"])
 app.include_router(lms_admin.router, prefix="/api/lms-admin", tags=["lms-admin"])
+app.include_router(projects.router, prefix="/api/projects", tags=["projects"])
 
 # EDT-002: прямая раздача загруженных файлов редактора. В README отмечено,
 # что для прода это должно стать объектным хранилищем за CDN/подписанными
