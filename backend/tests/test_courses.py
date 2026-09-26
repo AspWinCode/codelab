@@ -71,6 +71,38 @@ def test_course_tree_and_publish_flow(client, db_session):
     assert resp.json()["title"] == "Переименовано"
 
 
+def test_republish_clones_quiz_questions(client, db_session):
+    """Регресс: publish_course клонирует дерево черновика в новую версию,
+    но клон LearningItem не копировал quiz_questions — после повторной
+    публикации курса с тестом (type=quiz) вопросы у клона терялись."""
+    methodist = make_user(db_session, "methodist")
+
+    as_user(client, methodist)
+    course = client.post("/api/courses", json={"title": "Курс с тестом"}).json()
+
+    quiz_item = client.post(f"/api/courses/{course['id']}/items", json={
+        "type": "quiz", "title": "Тест по теме", "position": 0,
+        "quiz_questions": [
+            {"text": "2 + 2?", "options": [{"text": "4", "correct": True}, {"text": "5", "correct": False}]},
+        ],
+    }).json()
+    assert quiz_item["quiz_questions"]
+
+    # Первая публикация создаёт черновик следующей версии — клонируем его снова.
+    assert client.post(f"/api/courses/{course['id']}/publish").status_code == 200
+    assert client.post(f"/api/courses/{course['id']}/publish").status_code == 200
+
+    versions = db_session.query(CourseVersion).filter(CourseVersion.course_id == course["id"]).all()
+    draft = [v for v in versions if v.published_at is None][0]
+    cloned_quiz = (
+        db_session.query(LearningItem)
+        .filter(LearningItem.course_version_id == draft.id, LearningItem.type == "quiz")
+        .first()
+    )
+    assert cloned_quiz.quiz_questions
+    assert cloned_quiz.quiz_questions[0]["text"] == "2 + 2?"
+
+
 def test_methodist_cannot_edit_foreign_course_via_cookie_session(client, db_session):
     """RBAC-002 — та же проверка владения, что и у /api/lms-admin/*, должна
     действовать и на прямом браузерном SSO-cookie входе методиста, а не
