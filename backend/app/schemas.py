@@ -74,6 +74,10 @@ class ProblemRevisionStudentOut(BaseModel):
     language: str
     allowed_libraries: List[str]
     visible_tests: List[ProblemTestOut]
+    template_code: Optional[str]
+    # IDE-002: последний код ученика по ЭТОЙ задаче — фронт подставляет его в
+    # редактор при открытии, а не то, что осталось в редакторе от предыдущей.
+    draft_code: Optional[str]
 
 
 class CourseCreate(BaseModel):
@@ -111,6 +115,35 @@ class SnapStep(BaseModel):
     content: str = ""
 
 
+class QuizOption(BaseModel):
+    text: str
+    correct: bool = False
+
+
+class QuizQuestion(BaseModel):
+    """Один тип вопроса — несколько правильных ответов (checkbox). Живёт
+    прямо на элементе дерева (LearningItem.quiz_questions), не в отдельном
+    банке — вопросы между тестами не переиспользуются."""
+
+    text: str
+    options: List[QuizOption] = []
+
+
+class QuizAttemptCreate(BaseModel):
+    # answers[i] — индексы отмеченных учеником вариантов вопроса №i, в
+    # порядке item.quiz_questions на момент отправки попытки.
+    answers: List[List[int]]
+
+
+class QuizAttemptOut(BaseModel):
+    id: int
+    item_id: int
+    score: float
+    created_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
 class LearningItemCreate(BaseModel):
     """LMS-001..004: элемент дерева курса. Для type="task" обязателен
     problem_revision_id — сама задача создаётся отдельно, POST /courses/{id}/tasks.
@@ -132,6 +165,7 @@ class LearningItemCreate(BaseModel):
     unlock_rules: dict = {}
     problem_revision_id: Optional[int] = None
     steps: Optional[List[SnapStep]] = None
+    quiz_questions: Optional[List[QuizQuestion]] = None
     # Только для type="project" — срок сдачи (см. ProjectSubmission).
     due_at: Optional[datetime] = None
 
@@ -146,6 +180,7 @@ class LearningItemUpdate(BaseModel):
     position: Optional[int] = None
     unlock_rules: Optional[dict] = None
     steps: Optional[List[SnapStep]] = None
+    quiz_questions: Optional[List[QuizQuestion]] = None
     due_at: Optional[datetime] = None
 
 
@@ -163,6 +198,12 @@ class LearningItemOut(BaseModel):
     problem_revision_id: Optional[int]
     is_archived: bool = False
     steps: Optional[List[SnapStep]] = None
+    # ВНИМАНИЕ: содержит правильные ответы (QuizOption.correct) — этот
+    # объект уходит студенту только через build_student_tree, которая
+    # обязана стереть correct у каждого варианта (см. course_admin.py).
+    # Отдельной "student"-схемы нет специально: тип элемента один и тот же
+    # (LearningItemTree) что для методиста, что для ученика.
+    quiz_questions: Optional[List[QuizQuestion]] = None
     due_at: Optional[datetime] = None
 
     model_config = ConfigDict(from_attributes=True)

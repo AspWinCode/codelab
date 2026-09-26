@@ -18,6 +18,7 @@ from app.models import (
     NotificationType,
     ProblemRevision,
     Progress,
+    QuizAttempt,
     Submission,
     SubmissionStatus,
     Verdict,
@@ -64,10 +65,29 @@ def resolve_official_score(db: Session, user_id: int, problem_revision_id: int) 
     return max(_effective_score(s) for s in submissions)
 
 
+def resolve_official_quiz_score(db: Session, user_id: int, item_id: int) -> Optional[float]:
+    """Аналог resolve_official_score для теста — лучший результат из всех
+    попыток (единственная политика подсчёта, у теста нет scoring_policy как
+    у задачи — не нужно, пока не попросили)."""
+    best = (
+        db.query(QuizAttempt.score)
+        .filter(QuizAttempt.user_id == user_id, QuizAttempt.item_id == item_id)
+        .order_by(QuizAttempt.score.desc())
+        .first()
+    )
+    return best[0] if best else None
+
+
+def _resolve_official_item_score(db: Session, user_id: int, item: LearningItem) -> Optional[float]:
+    if item.type == LearningItemType.TASK and item.problem_revision_id:
+        return resolve_official_score(db, user_id, item.problem_revision_id)
+    if item.type == LearningItemType.QUIZ:
+        return resolve_official_quiz_score(db, user_id, item.id)
+    return None
+
+
 def _item_passed(db: Session, user_id: int, item: LearningItem) -> bool:
-    if item.type != LearningItemType.TASK or not item.problem_revision_id:
-        return False
-    score = resolve_official_score(db, user_id, item.problem_revision_id)
+    score = _resolve_official_item_score(db, user_id, item)
     return score is not None and score > 0
 
 
@@ -81,6 +101,22 @@ def is_item_unlocked(db: Session, user_id: int, item: LearningItem, items_by_id:
     if not predecessor:
         return True
     return _item_passed(db, user_id, predecessor)
+
+
+def recompute_progress_for_quiz_attempt(db: Session, attempt: QuizAttempt) -> None:
+    """Аналог recompute_progress_for_submission (GRD-005) для теста —
+    вызывается сразу после сохранения попытки (подсчёт синхронный, без
+    очереди воркера, см. submissions.py)."""
+    item = db.query(LearningItem).filter(LearningItem.id == attempt.item_id).first()
+    if not item:
+        return
+    enrollments = (
+        db.query(Enrollment)
+        .filter(Enrollment.user_id == attempt.user_id, Enrollment.course_version_id == item.course_version_id)
+        .all()
+    )
+    for enrollment in enrollments:
+        _recompute_course_progress(db, enrollment)
 
 
 def recompute_progress_for_submission(db: Session, submission: Submission) -> None:
@@ -106,18 +142,24 @@ def recompute_progress_for_submission(db: Session, submission: Submission) -> No
 
 
 def _recompute_course_progress(db: Session, enrollment: Enrollment) -> None:
-    task_items = (
+    gradable_items = (
         db.query(LearningItem)
-        .filter(LearningItem.course_version_id == enrollment.course_version_id, LearningItem.type == LearningItemType.TASK)
+        .filter(
+            LearningItem.course_version_id == enrollment.course_version_id,
+            LearningItem.type.in_([LearningItemType.TASK, LearningItemType.QUIZ]),
+        )
         .all()
     )
-    required_items = [i for i in task_items if i.is_required and i.problem_revision_id]
+    required_items = [
+        i for i in gradable_items
+        if i.is_required and (i.problem_revision_id if i.type == LearningItemType.TASK else True)
+    ]
 
     total = len(required_items)
     completed = 0
     points = 0.0
     for item in required_items:
-        score = resolve_official_score(db, enrollment.user_id, item.problem_revision_id)
+        score = _resolve_official_item_score(db, enrollment.user_id, item)
         if score is not None:
             points += score * item.weight
             if score > 0:

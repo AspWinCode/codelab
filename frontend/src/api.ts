@@ -55,6 +55,26 @@ export interface SnapStep {
   content: string;
 }
 
+// Один тип вопроса — несколько правильных ответов (checkbox). У ученика
+// `correct` всегда false (сервер стирает его перед выдачей, см. Codelab
+// course_admin.build_student_tree/_strip_quiz_answers) — просто не читаем.
+export interface QuizOption {
+  text: string;
+  correct: boolean;
+}
+
+export interface QuizQuestion {
+  text: string;
+  options: QuizOption[];
+}
+
+export interface QuizAttempt {
+  id: number;
+  item_id: number;
+  score: number;
+  created_at: string;
+}
+
 export interface LearningItem {
   id: number;
   type: string;
@@ -68,6 +88,7 @@ export interface LearningItem {
   unlock_rules: Record<string, unknown>;
   problem_revision_id: number | null;
   steps: SnapStep[] | null;
+  quiz_questions: QuizQuestion[] | null;
   due_at: string | null;
 }
 
@@ -192,6 +213,8 @@ export interface ProblemForStudent {
   language: string;
   allowed_libraries: string[];
   visible_tests: ProblemTest[];
+  template_code: string | null;
+  draft_code: string | null;
 }
 
 export const api = {
@@ -207,6 +230,9 @@ export const api = {
   mySubmissions: (problemRevisionId: number) =>
     request<Submission[]>(`/submissions?problem_revision_id=${problemRevisionId}`),
   getProblem: (problemRevisionId: number) => request<ProblemForStudent>(`/courses/problems/${problemRevisionId}`),
+  submitQuizAttempt: (itemId: number, answers: number[][]) =>
+    request<QuizAttempt>(`/courses/quizzes/${itemId}/attempts`, { method: 'POST', body: JSON.stringify({ answers }) }),
+  myQuizAttempts: (itemId: number) => request<QuizAttempt[]>(`/courses/quizzes/${itemId}/attempts`),
   upload: async (file: File): Promise<UploadResult> => {
     const form = new FormData();
     form.append('file', file);
