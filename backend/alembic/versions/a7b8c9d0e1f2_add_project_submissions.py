@@ -24,11 +24,13 @@ def upgrade() -> None:
 
     op.add_column('learning_items', sa.Column('due_at', sa.DateTime(timezone=True), nullable=True))
 
+    # Не создаём тип отдельным .create() — create_table ниже сам создаёт
+    # типы своих колонок; двойное создание в одной транзакции падает
+    # с DuplicateObject и откатывает всю миграцию (было именно так).
     project_submission_status = sa.Enum(
         'DRAFT', 'SUBMITTED', 'NEEDS_REVISION', 'ACCEPTED',
         name='projectsubmissionstatus',
     )
-    project_submission_status.create(op.get_bind(), checkfirst=True)
 
     op.create_table(
         'project_submissions',
