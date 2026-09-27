@@ -53,6 +53,10 @@ class LearningItemType(str, enum.Enum):
     # iframe справа), только на gdevelop.tirskix.space. Тоже без автопроверки
     # пока (см. LearningItem.steps, общий для обоих типов).
     GDEVELOP_TASK = "gdevelop_task"
+    # Задание "Черепашка" — тот же паттерн (шаги слева, статичный iframe
+    # справа), только на turtle.tirskix.space: свой редактор с переключателем
+    # блоки/код (Blockly + JS), рисующий на canvas. Тоже без автопроверки.
+    TURTLE_TASK = "turtle_task"
     # Проект с ручной проверкой: ученик прикрепляет один или несколько файлов
     # (исходный код и т.п.), тренер их скачивает, комментирует по файлу,
     # принимает/отправляет на доработку и ставит оценку. См. ProjectSubmission.
@@ -199,9 +203,9 @@ class LearningItem(Base):
     # Срок сдачи для type=project — используется для бейджа "просрочено" у
     # ученика и в списке сдач тренера; для остальных типов не заполняется.
     due_at = Column(DateTime(timezone=True), nullable=True)
-    # Шаги для type=snap_task: [{"title": str, "content": html}, ...]. Панель
-    # Snap! в них не участвует — она одна и статична на весь элемент, шаги
-    # листают только текст инструкции слева.
+    # Шаги для type=snap_task/gdevelop_task/turtle_task: [{"title": str,
+    # "content": html}, ...]. Панель редактора в них не участвует — она одна
+    # и статична на весь элемент, шаги листают только текст инструкции слева.
     steps = Column(JSON, nullable=True)
     # Вопросы для type=quiz: [{"text": str, "options": [{"text": str, "correct": bool}]}, ...].
     # Один тип вопроса — несколько правильных ответов (checkbox). Живут прямо

@@ -358,7 +358,7 @@ def create_item(db: Session, course_id: int, payload: LearningItemCreate) -> Lea
 
     if item_type == LearningItemType.TASK and not payload.problem_revision_id:
         raise HTTPException(status_code=422, detail="Для элемента типа task нужен problem_revision_id")
-    if item_type in (LearningItemType.SNAP_TASK, LearningItemType.GDEVELOP_TASK) and not payload.steps:
+    if item_type in (LearningItemType.SNAP_TASK, LearningItemType.GDEVELOP_TASK, LearningItemType.TURTLE_TASK) and not payload.steps:
         raise HTTPException(status_code=422, detail=f"Для элемента типа {item_type.value} нужен хотя бы один этап (steps)")
     if item_type == LearningItemType.QUIZ and not payload.quiz_questions:
         raise HTTPException(status_code=422, detail="Для элемента типа quiz нужен хотя бы один вопрос (quiz_questions)")

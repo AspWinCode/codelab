@@ -17,7 +17,7 @@ const DRAWER_WIDTH = 300;
 const TYPE_LABEL: Record<string, string> = {
   theory: 'Теория', video: 'Видео', file: 'Файл', link: 'Ссылка',
   quiz: 'Тест', task: 'Задача', manual: 'Ручное задание', checkpoint: 'Контрольная точка',
-  snap_task: 'Задание Snap!', gdevelop_task: 'Задание GDevelop', project: 'Проект',
+  snap_task: 'Задание Snap!', gdevelop_task: 'Задание GDevelop', turtle_task: 'Задание Черепашка', project: 'Проект',
 };
 
 const PROJECT_STATUS_LABEL: Record<string, string> = {
@@ -207,13 +207,16 @@ function ProjectView({ item }: { item: LearningItemTree }) {
 
 const SNAP_URL = 'https://snap.tirskix.space';
 const GDEVELOP_URL = 'https://gdevelop.tirskix.space';
+const TURTLE_URL = 'https://turtle.tirskix.space';
 
 /** Слева — пошаговая инструкция (стрелки листают steps), справа — статичный
- * iframe редактора (Snap!/GDevelop). iframe рендерится безусловно на каждый
- * рендер компонента, поэтому не перемонтируется при листании шагов или
- * переключении полноэкранного режима — сохраняется состояние проекта ученика
- * внутри редактора. Общий для snap_task и gdevelop_task — оба устроены
- * одинаково, различаются только адресом редактора и подписями. */
+ * iframe редактора (Snap!/GDevelop/Черепашка). iframe рендерится безусловно
+ * на каждый рендер компонента, поэтому не перемонтируется при листании шагов
+ * или переключении полноэкранного режима — сохраняется состояние проекта
+ * ученика внутри редактора (у Черепашки — ещё и в localStorage самого
+ * редактора, см. turtle.tirskix.space). Общий для snap_task, gdevelop_task и
+ * turtle_task — все устроены одинаково, различаются только адресом редактора
+ * и подписями. */
 function StepIframeTaskView({ item, iframeUrl, iframeTitle, expandLabel }: {
   item: LearningItemTree; iframeUrl: string; iframeTitle: string; expandLabel: string;
 }) {
@@ -527,6 +530,8 @@ export default function CoursePage() {
             <StepIframeTaskView item={selected} iframeUrl={SNAP_URL} iframeTitle="Snap!" expandLabel="Snap! на весь экран" />
           ) : selected && selected.type === 'gdevelop_task' ? (
             <StepIframeTaskView item={selected} iframeUrl={GDEVELOP_URL} iframeTitle="GDevelop" expandLabel="GDevelop на весь экран" />
+          ) : selected && selected.type === 'turtle_task' ? (
+            <StepIframeTaskView item={selected} iframeUrl={TURTLE_URL} iframeTitle="Черепашка" expandLabel="Черепашка на весь экран" />
           ) : selected && selected.type === 'quiz' ? (
             <QuizView key={selected.id} item={selected} />
           ) : (
