@@ -232,8 +232,12 @@ function StepIframeTaskView({ item, iframeUrl, iframeTitle, expandLabel }: {
     <Box sx={{ display: 'flex', height: 'calc(100vh - 64px)', width: '100%' }}>
       <Box
         sx={{
-          width: expanded ? 0 : { xs: '100%', md: '42%' },
-          minWidth: expanded ? 0 : { md: 340 },
+          // Без брейкпоинта sm инструкция растягивалась на 100% ширины уже
+          // при <900px (MUI берёт xs-значение, пока не встретит явный
+          // sm/md) — редактор/панель Skulpt справа сжималась в 0 (совсем
+          // не видна) на любом окне уже, чем "десктоп" в привычном смысле.
+          width: expanded ? 0 : { xs: '100%', sm: '50%', md: '42%' },
+          minWidth: expanded ? 0 : { sm: 260, md: 340 },
           overflow: 'hidden',
           transition: 'width 0.2s ease',
           borderRight: expanded ? 'none' : '1px solid',
@@ -259,7 +263,7 @@ function StepIframeTaskView({ item, iframeUrl, iframeTitle, expandLabel }: {
         )}
       </Box>
 
-      <Box sx={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' }}>
+      <Box sx={{ flex: 1, minWidth: 200, display: 'flex', flexDirection: 'column' }}>
         <Stack direction="row" justifyContent="flex-end" sx={{ px: 1.5, py: 1, borderBottom: '1px solid', borderColor: 'divider' }}>
           <Button
             size="small"
