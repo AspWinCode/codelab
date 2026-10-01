@@ -535,7 +535,15 @@ export default function CoursePage() {
           ) : selected && selected.type === 'gdevelop_task' ? (
             <StepIframeTaskView item={selected} iframeUrl={GDEVELOP_URL} iframeTitle="GDevelop" expandLabel="GDevelop на весь экран" />
           ) : selected && selected.type === 'turtle_task' ? (
-            <StepIframeTaskView item={selected} iframeUrl={TURTLE_URL} iframeTitle="Черепашка" expandLabel="Черепашка на весь экран" />
+            <StepIframeTaskView
+              item={selected}
+              // ?task=<id> — черепашка хранит код/рисунок ученика в своём
+              // localStorage по этому ключу, чтобы разные задания "Черепашка"
+              // в разных уроках не делили один и тот же сохранённый прогресс.
+              iframeUrl={`${TURTLE_URL}?task=${selected.id}`}
+              iframeTitle="Черепашка"
+              expandLabel="Черепашка на весь экран"
+            />
           ) : selected && selected.type === 'quiz' ? (
             <QuizView key={selected.id} item={selected} />
           ) : (
