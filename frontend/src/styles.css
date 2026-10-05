@@ -10,11 +10,22 @@
 
 .preview pre {
   /* Блоки кода нарочно остаются на фиксированной тёмной теме hljs
-   * (github-dark) независимо от режима приложения — см. main.tsx. */
+   * (github-dark) независимо от режима приложения — см. main.tsx.
+   * Текст — явно светлый (цвет текста github-dark, #c9d1d9), а не
+   * унаследованный от MuiCssBaseline body-цвет темы приложения: без этого
+   * блок кода, который почему-то не получил класс "hljs" (например, HTML
+   * из rich-text редактора — EDT-003 — идёт в DOMPurify напрямую, минуя
+   * marked/markedHighlight, которые и навешивают hljs-разметку), оставался
+   * с тёмным текстом светлой темы поверх всегда тёмного фона — нечитаемо. */
   background: #0d1117;
+  color: #c9d1d9;
   padding: 12px;
   border-radius: 8px;
   overflow-x: auto;
+}
+
+.preview pre code {
+  color: inherit;
 }
 
 .preview :not(pre) > code {
