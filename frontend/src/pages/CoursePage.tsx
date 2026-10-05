@@ -62,10 +62,13 @@ function ProjectView({ item }: { item: LearningItemTree }) {
       for (const file of Array.from(files)) {
         await api.uploadProjectFile(item.id, file);
       }
-      load();
     } catch (e: any) {
       setError(e.message);
     } finally {
+      // Перечитываем состояние сервера даже при ошибке посередине —
+      // файлы, которые успели загрузиться до отказавшего, должны появиться
+      // в списке, а не выглядеть как "ничего не загрузилось".
+      load();
       setUploading(false);
       if (fileInputRef.current) fileInputRef.current.value = '';
     }
