@@ -18,7 +18,7 @@ from app.models import (
     User,
 )
 from app.schemas import DashboardCourseOut, DashboardOut, NextItemOut, RecentResultOut
-from app.services.progress_calc import is_item_unlocked, resolve_official_score
+from app.services.progress_calc import is_item_passed, is_item_unlocked
 
 router = APIRouter()
 
@@ -38,8 +38,7 @@ def _find_next_item(db: Session, user_id: int, course_version_id: int) -> NextIt
             continue
         if not is_item_unlocked(db, user_id, item, items_by_id):
             continue
-        score = resolve_official_score(db, user_id, item.problem_revision_id)
-        if score is None or score <= 0:
+        if not is_item_passed(db, user_id, item):  # частичный score > 0 — ещё не решено
             return NextItemOut(id=item.id, title=item.title)
     return None
 

@@ -86,9 +86,13 @@ def _resolve_official_item_score(db: Session, user_id: int, item: LearningItem) 
     return None
 
 
-def _item_passed(db: Session, user_id: int, item: LearningItem) -> bool:
+def is_item_passed(db: Session, user_id: int, item: LearningItem) -> bool:
+    """Задача/тест считаются пройденными только при ПОЛНОМ балле (100) —
+    частично верное решение (Wrong Answer с частичным score > 0 за
+    пройденные тесты) не должно засчитываться как решённое, открывать
+    зависимый контент или попадать в "решено" на дашборде/в дереве курса."""
     score = _resolve_official_item_score(db, user_id, item)
-    return score is not None and score > 0
+    return score is not None and score >= 100
 
 
 def is_item_unlocked(db: Session, user_id: int, item: LearningItem, items_by_id: dict[int, LearningItem]) -> bool:
@@ -100,7 +104,7 @@ def is_item_unlocked(db: Session, user_id: int, item: LearningItem, items_by_id:
     predecessor = items_by_id.get(after_id)
     if not predecessor:
         return True
-    return _item_passed(db, user_id, predecessor)
+    return is_item_passed(db, user_id, predecessor)
 
 
 def recompute_progress_for_quiz_attempt(db: Session, attempt: QuizAttempt) -> None:
@@ -161,8 +165,8 @@ def _recompute_course_progress(db: Session, enrollment: Enrollment) -> None:
     for item in required_items:
         score = _resolve_official_item_score(db, enrollment.user_id, item)
         if score is not None:
-            points += score * item.weight
-            if score > 0:
+            points += score * item.weight  # очки — по фактическому баллу, в т.ч. частичному
+            if score >= 100:  # "решено" — только при полном балле, см. is_item_passed
                 completed += 1
 
     progress = (

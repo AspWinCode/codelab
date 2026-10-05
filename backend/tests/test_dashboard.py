@@ -1,4 +1,6 @@
 """STU-001/004/005: главная страница ученика и сохранение позиции в материале."""
+from datetime import datetime, timezone
+
 from app.models import (
     Course,
     CourseVersion,
@@ -10,6 +12,7 @@ from app.models import (
     Progress,
     Submission,
     SubmissionStatus,
+    Verdict,
 )
 from tests.conftest import as_user, make_user
 
@@ -54,6 +57,59 @@ def test_dashboard_shows_progress_next_item_and_recent_results(client, db_sessio
     assert len(body["recent_results"]) == 1
     assert body["recent_results"][0]["task_title"] == "Задача 1"
     assert body["recent_results"][0]["score"] == 100.0
+
+
+def test_dashboard_marks_accepted_task_as_solved_not_a_partial_one(client, db_session):
+    """Регресс: после Accepted-решения задача должна считаться решённой
+    (пропадать из "следующий шаг", засчитываться в проценте), а решение с
+    частичным баллом (не все тесты, Wrong Answer) — не должно."""
+    student = make_user(db_session, "student")
+
+    course = Course(title="Программист")
+    db_session.add(course)
+    db_session.flush()
+    version = CourseVersion(course_id=course.id, version_number=1, published_at=datetime.now(timezone.utc))
+    db_session.add(version)
+    db_session.flush()
+    course.active_version_id = version.id
+    db_session.commit()
+
+    problem1 = ProblemRevision(task_id=1, revision_number=1, title="Задача 1")
+    problem2 = ProblemRevision(task_id=2, revision_number=1, title="Задача 2")
+    db_session.add_all([problem1, problem2])
+    db_session.flush()
+
+    item1 = LearningItem(course_version_id=version.id, type=LearningItemType.TASK, title="Задача 1", problem_revision_id=problem1.id, position=0)
+    item2 = LearningItem(course_version_id=version.id, type=LearningItemType.TASK, title="Задача 2", problem_revision_id=problem2.id, position=1)
+    db_session.add_all([item1, item2])
+    db_session.flush()
+
+    db_session.add(Enrollment(user_id=student.id, course_id=course.id, course_version_id=version.id, status=EnrollmentStatus.ACTIVE))
+    # Задача 1 — полностью решена (Accepted, score=100).
+    db_session.add(Submission(
+        user_id=student.id, problem_revision_id=problem1.id, code="x",
+        status=SubmissionStatus.DONE, verdict=Verdict.ACCEPTED, score=100.0,
+    ))
+    # Задача 2 — только частичный результат (не все тесты прошли).
+    db_session.add(Submission(
+        user_id=student.id, problem_revision_id=problem2.id, code="y",
+        status=SubmissionStatus.DONE, verdict=Verdict.WRONG_ANSWER, score=50.0,
+    ))
+    db_session.add(Progress(user_id=student.id, course_id=course.id, completed_items=1, total_items=2, percent=50.0, points=150))
+    db_session.commit()
+
+    as_user(client, student)
+    resp = client.get("/api/me/dashboard")
+    assert resp.status_code == 200
+    course_out = resp.json()["courses"][0]
+
+    # Задача 1 (Accepted) решена — следующий шаг указывает на Задачу 2, не на Задачу 1.
+    assert course_out["next_item"]["id"] == item2.id
+
+    tree_resp = client.get(f"/api/courses/{course.id}/tree")
+    tree = {node["id"]: node for node in tree_resp.json()}
+    assert tree[item1.id]["completed"] is True  # Accepted — решено
+    assert tree[item2.id]["completed"] is False  # частичный балл — не решено
 
 
 def test_last_position_rejects_item_from_other_course_version(client, db_session):
