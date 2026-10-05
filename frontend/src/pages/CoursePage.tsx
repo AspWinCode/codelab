@@ -609,7 +609,10 @@ export default function CoursePage() {
                   sx={{ mb: 1.5, '& .MuiOutlinedInput-root': { bgcolor: 'background.paper' } }}
                 />
                 <TextField
-                  label="stdin для «Запустить»" fullWidth size="small" value={stdin}
+                  label="stdin для «Запустить»" helperText="Каждое значение input() — с новой строки"
+                  multiline fullWidth minRows={2} maxRows={6}
+                  inputProps={{ style: { fontFamily: FONT_CODE } }}
+                  value={stdin}
                   onChange={(e) => setStdin(e.target.value)}
                   sx={{ mb: 2 }}
                 />

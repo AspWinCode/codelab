@@ -23,6 +23,13 @@ def execute_code(
 ) -> RunResult:
     environment = get_environment(environment_id)  # ValueError на неизвестном id — пусть вызывающий решает, как это отразить в вердикте
 
+    # CRLF → LF: stdin из браузерного textarea (IDE-003 "Запустить") или
+    # вставленный методистом текст теста может прийти с "\r\n" — Python
+    # input() в контейнере режет строку только по "\n" и оставляет "\r" в
+    # значении (например, int("2\r") уже ломает сравнение/приведение типа),
+    # хотя с точки зрения ученика/методиста это та же самая строка "2".
+    stdin = stdin.replace("\r\n", "\n").replace("\r", "\n")
+
     if settings.runner_backend == "subprocess":
         if environment_id not in _SUBPROCESS_SUPPORTED_ENVIRONMENTS:
             raise RuntimeError(
