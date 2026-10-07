@@ -8,6 +8,13 @@
   border-radius: 8px;
 }
 
+/* Lecture text and code should not be selectable/copied from the student view. */
+.lecture-content,
+.lecture-content * {
+  -webkit-user-select: none;
+  user-select: none;
+}
+
 .preview pre {
   background: #0d1117;
   color: #c9d1d9;

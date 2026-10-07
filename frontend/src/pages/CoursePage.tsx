@@ -632,7 +632,13 @@ export default function CoursePage() {
             {selected && selected.type !== 'task' && selected.type !== 'project' && (
               <Box>
                 <Typography variant="h2" sx={{ mb: 2 }}>{selected.title}</Typography>
-                <Box className="preview" dangerouslySetInnerHTML={{ __html: renderContentHtml(selected.content || selected.description || '') }} />
+                <Box
+                  className={`preview${selected.type === 'theory' ? ' lecture-content' : ''}`}
+                  onCopy={selected.type === 'theory' ? (event) => event.preventDefault() : undefined}
+                  onCut={selected.type === 'theory' ? (event) => event.preventDefault() : undefined}
+                  onContextMenu={selected.type === 'theory' ? (event) => event.preventDefault() : undefined}
+                  dangerouslySetInnerHTML={{ __html: renderContentHtml(selected.content || selected.description || '') }}
+                />
                 {selected.type === 'theory' && (
                   <Stack direction="row" justifyContent="space-between" sx={{ mt: 4 }}>
                     <Button
