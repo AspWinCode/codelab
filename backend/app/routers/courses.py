@@ -170,21 +170,11 @@ def get_tree(course_id: int, db: Session = Depends(get_db), user: User = Depends
         raise HTTPException(status_code=404, detail="Курс не найден")
 
     if user.role == "student":
-        # Enrollment pins the published version assigned to this student.
-        # After republishing, the active version may be newer than the one
-        # accepted by their enrollment, so navigation must use the pinned one.
-        enrollment = (
-            db.query(Enrollment)
-            .filter(
-                Enrollment.user_id == user.id,
-                Enrollment.course_id == course_id,
-                Enrollment.status == EnrollmentStatus.ACTIVE,
-            )
-            .first()
-        )
-        version_id = enrollment.course_version_id if enrollment and enrollment.course_version_id else course.active_version_id
-        if not version_id:
+        # Students follow the currently published course tree so newly
+        # published tasks appear without requiring a new enrollment.
+        if not course.active_version_id:
             raise HTTPException(status_code=404, detail="Курс ещё не опубликован")
+        version_id = course.active_version_id
     else:
         course_admin.ensure_course_owner(course, user)
         version_id = course_admin.get_draft_version(db, course_id).id
@@ -214,7 +204,9 @@ def set_last_position(
         raise HTTPException(status_code=404, detail="Вы не записаны на этот курс")
 
     item = db.query(LearningItem).filter(LearningItem.id == payload.item_id).first()
-    if not item or item.course_version_id != enrollment.course_version_id:
+    course = db.query(Course).filter(Course.id == course_id).first()
+    version_id = course.active_version_id if course and course.active_version_id else enrollment.course_version_id
+    if not item or item.course_version_id != version_id:
         raise HTTPException(status_code=422, detail="Элемент не относится к назначенной версии курса")
 
     enrollment.last_item_id = payload.item_id
@@ -241,8 +233,10 @@ def complete_content_item(
     )
     if not enrollment:
         raise HTTPException(status_code=404, detail="Вы не записаны на этот курс")
+    course = db.query(Course).filter(Course.id == course_id).first()
     item = db.query(LearningItem).filter(LearningItem.id == item_id).first()
-    if not item or item.course_version_id != enrollment.course_version_id:
+    version_id = course.active_version_id if course and course.active_version_id else enrollment.course_version_id
+    if not item or item.course_version_id != version_id:
         raise HTTPException(status_code=422, detail="Элемент не относится к назначенной версии курса")
     course_admin.mark_content_item_completed(db, user.id, item)
     return {"ok": True}
