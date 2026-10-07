@@ -209,6 +209,7 @@ def set_last_position(
 
     enrollment.last_item_id = payload.item_id
     db.commit()
+    course_admin.mark_content_item_completed(db, user.id, item)
     return {"ok": True}
 
 

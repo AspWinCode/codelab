@@ -1,7 +1,7 @@
-import { CheckCircle, CloseFullscreen, ExpandLess, ExpandMore, Lock, OpenInFull, RadioButtonUnchecked } from '@mui/icons-material';
+import { CheckCircle, CloseFullscreen, ExpandLess, ExpandMore, FolderOutlined, Lock, OpenInFull, RadioButtonUnchecked } from '@mui/icons-material';
 import {
   Alert, Box, Button, Checkbox, Chip, Container, Divider, Drawer, FormControlLabel,
-  FormGroup, List, ListItemButton, ListItemIcon, ListItemText, Paper, Stack, TextField, Typography,
+  FormGroup, List, ListItem, ListItemButton, ListItemIcon, ListItemText, Paper, Stack, TextField, Typography,
 } from '@mui/material';
 import { useEffect, useRef, useState } from 'react';
 import { useParams, useSearchParams } from 'react-router-dom';
@@ -388,37 +388,73 @@ function TreeNode({ item, depth, selectedId, onSelect }: {
 }) {
   const locked = !item.unlocked;
   const hasChildren = item.children.length > 0;
+  const isStructural = ['module', 'submodule', 'topic', 'subtopic'].includes(item.type);
   // Развёрнуто по умолчанию — прежнее поведение (все узлы всегда видны),
   // стрелка только добавляет возможность свернуть, не меняет дефолт.
   const [open, setOpen] = useState(true);
 
   return (
     <>
-      <ListItemButton
-        selected={selectedId === item.id}
-        disabled={locked}
-        onClick={() => !locked && onSelect(item)}
-        sx={{ pl: 2 + depth * 2 }}
-        dense
-      >
-        <ListItemIcon sx={{ minWidth: 30 }}>
-          {item.completed ? <CheckCircle fontSize="small" color="success" /> : locked ? <Lock fontSize="small" /> : <RadioButtonUnchecked fontSize="small" />}
-        </ListItemIcon>
-        <ListItemText
-          primary={item.title}
-          secondary={TYPE_LABEL[item.type] || item.type}
-          primaryTypographyProps={{ fontSize: '0.9rem', fontWeight: 500 }}
-          secondaryTypographyProps={{ fontSize: '0.75rem' }}
-        />
-        {hasChildren && (
-          <ListItemIcon
-            sx={{ minWidth: 24, justifyContent: 'flex-end', cursor: 'pointer' }}
-            onClick={(e) => { e.stopPropagation(); setOpen((v) => !v); }}
-          >
-            {open ? <ExpandLess fontSize="small" /> : <ExpandMore fontSize="small" />}
+      {isStructural ? (
+        <ListItem
+          dense
+          sx={{
+            pl: 1 + depth * 2,
+            pr: 1,
+            py: 0.35,
+            my: 0.25,
+            minHeight: 36,
+            bgcolor: item.type === 'module' ? 'action.hover' : 'action.selected',
+            borderLeft: '3px solid',
+            borderColor: item.type === 'module' ? 'primary.main' : 'secondary.main',
+            borderRadius: '0 8px 8px 0',
+          }}
+        >
+          <ListItemIcon sx={{ minWidth: 28, color: 'text.secondary' }}>
+            <FolderOutlined fontSize="small" />
           </ListItemIcon>
-        )}
-      </ListItemButton>
+          <ListItemText
+            primary={item.title}
+            secondary={TYPE_LABEL[item.type] || item.type}
+            primaryTypographyProps={{ fontSize: '0.78rem', fontWeight: 700, lineHeight: 1.2 }}
+            secondaryTypographyProps={{ fontSize: '0.65rem', lineHeight: 1.1 }}
+          />
+          {hasChildren && (
+            <ListItemIcon
+              sx={{ minWidth: 24, justifyContent: 'flex-end', cursor: 'pointer' }}
+              onClick={(e) => { e.stopPropagation(); setOpen((v) => !v); }}
+            >
+              {open ? <ExpandLess fontSize="small" /> : <ExpandMore fontSize="small" />}
+            </ListItemIcon>
+          )}
+        </ListItem>
+      ) : (
+        <ListItemButton
+          selected={selectedId === item.id}
+          disabled={locked}
+          onClick={() => !locked && onSelect(item)}
+          sx={{ pl: 2 + depth * 2 }}
+          dense
+        >
+          <ListItemIcon sx={{ minWidth: 30 }}>
+            {item.completed ? <CheckCircle fontSize="small" color="success" /> : locked ? <Lock fontSize="small" /> : <RadioButtonUnchecked fontSize="small" />}
+          </ListItemIcon>
+          <ListItemText
+            primary={item.title}
+            secondary={TYPE_LABEL[item.type] || item.type}
+            primaryTypographyProps={{ fontSize: '0.9rem', fontWeight: 500 }}
+            secondaryTypographyProps={{ fontSize: '0.75rem' }}
+          />
+          {hasChildren && (
+            <ListItemIcon
+              sx={{ minWidth: 24, justifyContent: 'flex-end', cursor: 'pointer' }}
+              onClick={(e) => { e.stopPropagation(); setOpen((v) => !v); }}
+            >
+              {open ? <ExpandLess fontSize="small" /> : <ExpandMore fontSize="small" />}
+            </ListItemIcon>
+          )}
+        </ListItemButton>
+      )}
       {hasChildren && open && item.children.map((c) => (
         <TreeNode key={c.id} item={c} depth={depth + 1} selectedId={selectedId} onSelect={onSelect} />
       ))}
@@ -474,7 +510,9 @@ export default function CoursePage() {
     // загрузки problem, подставляется черновик/шаблон именно этой задачи.
     setCode('');
     setStdin('');
-    api.setLastPosition(Number(courseId), item.id).catch(() => {});
+    api.setLastPosition(Number(courseId), item.id)
+      .then(() => api.getTree(Number(courseId)).then(setTree))
+      .catch(() => {});
     if (item.type === 'task' && item.problem_revision_id) {
       api.mySubmissions(item.problem_revision_id).then(setHistory).catch(() => {});
       api.getProblem(item.problem_revision_id).then((p) => {
@@ -553,7 +591,7 @@ export default function CoursePage() {
               // ?task=<id> — черепашка хранит код/рисунок ученика в своём
               // localStorage по этому ключу, чтобы разные задания "Черепашка"
               // в разных уроках не делили один и тот же сохранённый прогресс.
-              iframeUrl={`${TURTLE_URL}?task=${selected.id}`}
+              iframeUrl={`${TURTLE_URL}?task=${selected.id}&blank=1`}
               iframeTitle="Черепашка"
               expandLabel="Черепашка на весь экран"
             />

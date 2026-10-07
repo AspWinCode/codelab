@@ -6,6 +6,7 @@ from app.models import (
     CourseVersion,
     Enrollment,
     EnrollmentStatus,
+    ItemCompletion,
     LearningItem,
     LearningItemType,
     ProblemRevision,
@@ -146,9 +147,10 @@ def test_last_position_rejects_item_from_other_course_version(client, db_session
     course = Course(title="C1")
     db_session.add(course)
     db_session.flush()
-    version = CourseVersion(course_id=course.id, version_number=1)
+    version = CourseVersion(course_id=course.id, version_number=1, published_at=datetime.now(timezone.utc))
     db_session.add(version)
     db_session.flush()
+    course.active_version_id = version.id
     other_version = CourseVersion(course_id=course.id, version_number=2)
     db_session.add(other_version)
     db_session.flush()
@@ -169,9 +171,10 @@ def test_last_position_saves_for_enrolled_course(client, db_session):
     course = Course(title="C1")
     db_session.add(course)
     db_session.flush()
-    version = CourseVersion(course_id=course.id, version_number=1)
+    version = CourseVersion(course_id=course.id, version_number=1, published_at=datetime.now(timezone.utc))
     db_session.add(version)
     db_session.flush()
+    course.active_version_id = version.id
     item = LearningItem(course_version_id=version.id, type=LearningItemType.THEORY, title="Урок 1")
     db_session.add(item)
     db_session.add(Enrollment(user_id=student.id, course_id=course.id, course_version_id=version.id, status=EnrollmentStatus.ACTIVE))
@@ -184,3 +187,34 @@ def test_last_position_saves_for_enrolled_course(client, db_session):
     db_session.refresh(db_session.query(Enrollment).filter(Enrollment.user_id == student.id).first())
     enrollment = db_session.query(Enrollment).filter(Enrollment.user_id == student.id).first()
     assert enrollment.last_item_id == item.id
+    completion = db_session.query(ItemCompletion).filter(
+        ItemCompletion.user_id == student.id,
+        ItemCompletion.item_id == item.id,
+    ).one()
+    assert completion.item_id == item.id
+
+    tree = client.get(f"/api/courses/{course.id}/tree")
+    assert tree.status_code == 200
+    assert tree.json()[0]["completed"] is True
+
+
+def test_last_position_does_not_complete_gradable_item(client, db_session):
+    student = make_user(db_session, "student")
+    course = Course(title="C1")
+    db_session.add(course)
+    db_session.flush()
+    version = CourseVersion(course_id=course.id, version_number=1, published_at=datetime.now(timezone.utc))
+    db_session.add(version)
+    db_session.flush()
+    course.active_version_id = version.id
+    problem = ProblemRevision(task_id=1, revision_number=1, title="Задача")
+    db_session.add(problem)
+    db_session.flush()
+    item = LearningItem(course_version_id=version.id, type=LearningItemType.TASK, title="Задача", problem_revision_id=problem.id)
+    db_session.add(item)
+    db_session.add(Enrollment(user_id=student.id, course_id=course.id, course_version_id=version.id, status=EnrollmentStatus.ACTIVE))
+    db_session.commit()
+
+    as_user(client, student)
+    assert client.put(f"/api/courses/{course.id}/last-position", json={"item_id": item.id}).status_code == 200
+    assert db_session.query(ItemCompletion).filter(ItemCompletion.item_id == item.id).count() == 0
