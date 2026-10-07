@@ -39,7 +39,7 @@ def test_dashboard_shows_progress_next_item_and_recent_results(client, db_sessio
 
     db_session.add(Enrollment(user_id=student.id, course_id=course.id, course_version_id=version.id, status=EnrollmentStatus.ACTIVE))
     db_session.add(Progress(user_id=student.id, course_id=course.id, completed_items=1, total_items=2, percent=50.0, points=100))
-    db_session.add(Submission(user_id=student.id, problem_revision_id=problem1.id, code="x", status=SubmissionStatus.DONE, score=100.0))
+    db_session.add(Submission(user_id=student.id, problem_revision_id=problem1.id, code="x", status=SubmissionStatus.DONE, verdict=Verdict.ACCEPTED, score=100.0))
     db_session.commit()
 
     as_user(client, student)
@@ -110,6 +110,34 @@ def test_dashboard_marks_accepted_task_as_solved_not_a_partial_one(client, db_se
     tree = {node["id"]: node for node in tree_resp.json()}
     assert tree[item1.id]["completed"] is True  # Accepted — решено
     assert tree[item2.id]["completed"] is False  # частичный балл — не решено
+
+
+def test_dashboard_does_not_treat_full_wrong_answer_as_solved(client, db_session):
+    student = make_user(db_session, "student")
+    course = Course(title="Курс")
+    db_session.add(course)
+    db_session.flush()
+    version = CourseVersion(course_id=course.id, version_number=1, published_at=datetime.now(timezone.utc))
+    db_session.add(version)
+    db_session.flush()
+    course.active_version_id = version.id
+    problem = ProblemRevision(task_id=1, revision_number=1, title="Задача")
+    db_session.add(problem)
+    db_session.flush()
+    item = LearningItem(course_version_id=version.id, type=LearningItemType.TASK, title="Задача", problem_revision_id=problem.id)
+    db_session.add(item)
+    db_session.add(Enrollment(user_id=student.id, course_id=course.id, course_version_id=version.id, status=EnrollmentStatus.ACTIVE))
+    db_session.add(Submission(
+        user_id=student.id, problem_revision_id=problem.id, code="x",
+        status=SubmissionStatus.DONE, verdict=Verdict.WRONG_ANSWER, score=100.0,
+    ))
+    db_session.commit()
+
+    as_user(client, student)
+    body = client.get("/api/me/dashboard").json()
+    assert body["courses"][0]["completed_items"] == 0
+    assert body["courses"][0]["percent"] == 0.0
+    assert body["courses"][0]["next_item"]["id"] == item.id
 
 
 def test_last_position_rejects_item_from_other_course_version(client, db_session):

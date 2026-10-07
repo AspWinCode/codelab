@@ -177,7 +177,7 @@ def test_item_unlocks_after_predecessor_passed(db_session):
 
     assert is_item_unlocked(db_session, user.id, locked_item, items_by_id) is False
 
-    db_session.add(Submission(user_id=user.id, problem_revision_id=problem.id, code="x", status=SubmissionStatus.DONE, score=100.0))
+    db_session.add(Submission(user_id=user.id, problem_revision_id=problem.id, code="x", status=SubmissionStatus.DONE, verdict=Verdict.ACCEPTED, score=100.0))
     db_session.commit()
 
     assert is_item_unlocked(db_session, user.id, locked_item, items_by_id) is True

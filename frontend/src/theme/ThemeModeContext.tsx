@@ -27,6 +27,7 @@ export function ThemeModeProvider({ children }: { children: React.ReactNode }) {
   const [mode, setMode] = useState<Mode>(() => loadStoredMode() ?? (systemPrefersDark() ? 'dark' : 'light'));
 
   useEffect(() => {
+    document.documentElement.dataset.themeMode = mode;
     try {
       localStorage.setItem(STORAGE_KEY, mode);
     } catch {

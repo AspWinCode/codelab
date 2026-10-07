@@ -18,6 +18,7 @@ router = APIRouter()
 @router.get("/items/{item_id}/submission", response_model=ProjectSubmissionOut)
 def get_my_submission(item_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     item = project_admin.get_project_item_or_404(db, item_id)
+    project_admin.ensure_student_project_access(db, item, user.id)
     submission = project_admin.get_or_create_current_submission(db, item_id, user.id)
     return project_admin.to_submission_out(db, item, submission)
 
@@ -57,6 +58,9 @@ def download_file(file_id: int, db: Session = Depends(get_db), user: User = Depe
     is_staff = user.role in ("teacher", "methodist", "admin")
     if not is_owner and not is_staff:
         raise HTTPException(status_code=403, detail="Недостаточно прав")
+    if is_owner and submission:
+        item = project_admin.get_project_item_or_404(db, submission.learning_item_id)
+        project_admin.ensure_student_project_access(db, item, user.id)
     path = project_file_path(f.stored_name)
     if not path.exists():
         raise HTTPException(status_code=404, detail="Файл не найден на диске")

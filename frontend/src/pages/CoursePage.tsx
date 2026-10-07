@@ -40,17 +40,24 @@ function formatDateTime(iso: string): string {
 function ProjectView({ item }: { item: LearningItemTree }) {
   const [submission, setSubmission] = useState<ProjectSubmission | null>(null);
   const [error, setError] = useState('');
+  const [loading, setLoading] = useState(true);
   const [uploading, setUploading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
-  const load = () => {
-    api.getProjectSubmission(item.id).then(setSubmission).catch((e) => setError(e.message));
+  const load = async () => {
+    try {
+      setSubmission(await api.getProjectSubmission(item.id));
+    } catch (e: any) {
+      setError(e.message);
+    } finally {
+      setLoading(false);
+    }
   };
 
   useEffect(() => {
     setError('');
     setSubmission(null);
-    load();
+    void load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [item.id]);
 
@@ -68,7 +75,7 @@ function ProjectView({ item }: { item: LearningItemTree }) {
       // Перечитываем состояние сервера даже при ошибке посередине —
       // файлы, которые успели загрузиться до отказавшего, должны появиться
       // в списке, а не выглядеть как "ничего не загрузилось".
-      load();
+      await load();
       setUploading(false);
       if (fileInputRef.current) fileInputRef.current.value = '';
     }
@@ -94,6 +101,9 @@ function ProjectView({ item }: { item: LearningItemTree }) {
     }
   };
 
+  if (loading) {
+    return <Typography color="text.secondary">Загрузка файлов…</Typography>;
+  }
   if (!submission) {
     return (
       <Box>
@@ -592,8 +602,8 @@ export default function CoursePage() {
                         <Stack spacing={1}>
                           {problem.visible_tests.map((t, i) => (
                             <Stack key={i} direction="row" spacing={2}>
-                              <Box component="pre" sx={{ flex: 1, m: 0, fontFamily: FONT_CODE, fontSize: '0.8125rem', bgcolor: 'background.paper', border: '1px solid', borderColor: 'divider', borderRadius: 2, p: 1.5, whiteSpace: 'pre-wrap' }}>{t.input}</Box>
-                              <Box component="pre" sx={{ flex: 1, m: 0, fontFamily: FONT_CODE, fontSize: '0.8125rem', bgcolor: 'background.paper', border: '1px solid', borderColor: 'divider', borderRadius: 2, p: 1.5, whiteSpace: 'pre-wrap' }}>{t.expected}</Box>
+                              <Box component="pre" sx={{ flex: 1, m: 0, color: 'text.primary', fontFamily: FONT_CODE, fontSize: '0.8125rem', bgcolor: 'background.default', border: '1px solid', borderColor: 'divider', borderRadius: 2, p: 1.5, whiteSpace: 'pre-wrap' }}>{t.input}</Box>
+                              <Box component="pre" sx={{ flex: 1, m: 0, color: 'text.primary', fontFamily: FONT_CODE, fontSize: '0.8125rem', bgcolor: 'background.paper', border: '1px solid', borderColor: 'divider', borderRadius: 2, p: 1.5, whiteSpace: 'pre-wrap' }}>{t.expected}</Box>
                             </Stack>
                           ))}
                         </Stack>

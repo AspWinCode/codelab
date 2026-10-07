@@ -86,6 +86,40 @@ def test_student_can_attach_file_submit_and_not_edit_after(client, db_session):
     assert again.status_code == 409
 
 
+def test_student_sees_attached_files_after_reloading_submission(client, db_session):
+    course, version, item = _make_published_project(db_session)
+    student = make_user(db_session, "student", "lp-project-reload")
+    _enroll(db_session, student, course, version)
+    as_user(client, student)
+
+    upload = client.post(
+        f"/api/projects/items/{item.id}/files",
+        files={"file": ("main.py", io.BytesIO(b"print(1)"), "text/x-python")},
+    )
+    assert upload.status_code == 201
+    second = client.post(
+        f"/api/projects/items/{item.id}/files",
+        files={"file": ("README.md", io.BytesIO(b"# project"), "text/markdown")},
+    )
+    assert second.status_code == 201
+
+    reloaded = client.get(f"/api/projects/items/{item.id}/submission")
+    assert reloaded.status_code == 200
+    assert {f["original_filename"] for f in reloaded.json()["files"]} == {"main.py", "README.md"}
+
+
+def test_project_requires_active_enrollment(client, db_session):
+    course, version, item = _make_published_project(db_session)
+    student = make_user(db_session, "student", "lp-project-no-access")
+    as_user(client, student)
+
+    assert client.get(f"/api/projects/items/{item.id}/submission").status_code == 403
+    assert client.post(
+        f"/api/projects/items/{item.id}/files",
+        files={"file": ("solution.py", io.BytesIO(b"print(1)"), "text/x-python")},
+    ).status_code == 403
+
+
 def test_student_cannot_submit_without_files(client, db_session):
     course, version, item = _make_published_project(db_session)
     student = make_user(db_session, "student", "lp-student-2")

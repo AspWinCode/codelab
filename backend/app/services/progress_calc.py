@@ -65,6 +65,29 @@ def resolve_official_score(db: Session, user_id: int, problem_revision_id: int) 
     return max(_effective_score(s) for s in submissions)
 
 
+def _official_submission(db: Session, user_id: int, problem_revision_id: int) -> Optional[Submission]:
+    problem = db.query(ProblemRevision).filter(ProblemRevision.id == problem_revision_id).first()
+    if not problem:
+        return None
+    submissions = (
+        db.query(Submission)
+        .filter(
+            Submission.user_id == user_id,
+            Submission.problem_revision_id == problem_revision_id,
+            Submission.status == SubmissionStatus.DONE,
+        )
+        .order_by(Submission.created_at.asc())
+        .all()
+    )
+    if not submissions:
+        return None
+    if problem.scoring_policy == "last":
+        return submissions[-1]
+    if problem.scoring_policy == "first_accepted":
+        return next((s for s in submissions if s.verdict == Verdict.ACCEPTED), None)
+    return max(submissions, key=lambda s: (_effective_score(s), s.verdict == Verdict.ACCEPTED))
+
+
 def resolve_official_quiz_score(db: Session, user_id: int, item_id: int) -> Optional[float]:
     """Аналог resolve_official_score для теста — лучший результат из всех
     попыток (единственная политика подсчёта, у теста нет scoring_policy как
@@ -91,6 +114,13 @@ def is_item_passed(db: Session, user_id: int, item: LearningItem) -> bool:
     частично верное решение (Wrong Answer с частичным score > 0 за
     пройденные тесты) не должно засчитываться как решённое, открывать
     зависимый контент или попадать в "решено" на дашборде/в дереве курса."""
+    if item.type == LearningItemType.TASK and item.problem_revision_id:
+        submission = _official_submission(db, user_id, item.problem_revision_id)
+        if not submission or _effective_score(submission) < 100:
+            return False
+        # A full score from the judge must be Accepted. A teacher's explicit
+        # manual grade may override the automatic verdict.
+        return submission.verdict == Verdict.ACCEPTED or submission.manual_score_override is not None
     score = _resolve_official_item_score(db, user_id, item)
     return score is not None and score >= 100
 

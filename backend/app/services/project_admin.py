@@ -49,6 +49,25 @@ def get_course_for_project_item(db: Session, item: LearningItem) -> Optional[Cou
     return db.query(Course).filter(Course.id == version.course_id).first() if version else None
 
 
+def ensure_student_project_access(db: Session, item: LearningItem, user_id: int) -> None:
+    """Project files are available only in the student's active course version."""
+    course = get_course_for_project_item(db, item)
+    if not course:
+        raise HTTPException(status_code=404, detail="Курс проекта не найден")
+    enrollment = (
+        db.query(Enrollment)
+        .filter(
+            Enrollment.user_id == user_id,
+            Enrollment.course_id == course.id,
+            Enrollment.course_version_id == item.course_version_id,
+            Enrollment.status == EnrollmentStatus.ACTIVE,
+        )
+        .first()
+    )
+    if not enrollment:
+        raise HTTPException(status_code=403, detail="Вы не записаны на этот курс")
+
+
 def get_course_for_project_submission(db: Session, submission_id: int) -> Optional[Course]:
     submission = db.query(ProjectSubmission).filter(ProjectSubmission.id == submission_id).first()
     if not submission:
@@ -140,7 +159,8 @@ def _latest_submission(db: Session, item_id: int, user_id: int) -> Optional[Proj
 def get_or_create_current_submission(db: Session, item_id: int, user_id: int) -> ProjectSubmission:
     """Для GET — читает, не мутирует переходы статуса; только заводит
     первую попытку, если ученик ещё вообще не открывал сдачу."""
-    get_project_item_or_404(db, item_id)
+    item = get_project_item_or_404(db, item_id)
+    ensure_student_project_access(db, item, user_id)
     submission = _latest_submission(db, item_id, user_id)
     if submission:
         return submission
@@ -179,8 +199,24 @@ def get_file_or_404(db: Session, file_id: int) -> ProjectFile:
 
 
 async def attach_file(db: Session, item_id: int, user_id: int, filename: str, content_type: str, read_chunk) -> ProjectFile:
-    submission = get_attachable_submission(db, item_id, user_id)
+    item = get_project_item_or_404(db, item_id)
+    ensure_student_project_access(db, item, user_id)
+    current = get_or_create_current_submission(db, item_id, user_id)
+    # Validate and persist the upload before creating a retry attempt. An invalid
+    # upload must not leave an empty attempt behind.
     saved = await save_project_file(filename, content_type, read_chunk)
+    submission = current
+    if current.status == ProjectSubmissionStatus.NEEDS_REVISION:
+        submission = ProjectSubmission(
+            learning_item_id=item_id, user_id=user_id, attempt_number=current.attempt_number + 1,
+        )
+        db.add(submission)
+        db.flush()
+    elif current.status != ProjectSubmissionStatus.DRAFT:
+        delete_project_file(saved.stored_name)
+        if current.status == ProjectSubmissionStatus.SUBMITTED:
+            raise HTTPException(status_code=409, detail="Работа уже отправлена на проверку")
+        raise HTTPException(status_code=409, detail="Работа уже принята")
     f = ProjectFile(
         submission_id=submission.id,
         original_filename=filename or saved.stored_name,
@@ -189,7 +225,12 @@ async def attach_file(db: Session, item_id: int, user_id: int, filename: str, co
         size=saved.size,
     )
     db.add(f)
-    db.commit()
+    try:
+        db.commit()
+    except Exception:
+        db.rollback()
+        delete_project_file(saved.stored_name)
+        raise
     db.refresh(f)
     return f
 
