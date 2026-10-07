@@ -9,9 +9,9 @@
 }
 
 .preview pre {
-  background: var(--code-background, #ffffff);
-  color: var(--code-foreground, #1c1b22);
-  border: 1px solid var(--code-border, #e7e5de);
+  background: #0d1117;
+  color: #c9d1d9;
+  border: 0;
   padding: 12px;
   border-radius: 8px;
   overflow-x: auto;
@@ -21,31 +21,6 @@
   color: inherit;
   background: transparent;
 }
-
-html[data-theme-mode='dark'] {
-  --code-background: #1e1d2b;
-  --code-foreground: #f1f0f5;
-  --code-border: #332f44;
-}
-
-html[data-theme-mode='light'] {
-  --code-background: #ffffff;
-  --code-foreground: #1c1b22;
-  --code-border: #e7e5de;
-}
-
-html[data-theme-mode='dark'] .preview pre .hljs-keyword,
-html[data-theme-mode='dark'] .preview pre .hljs-selector-tag,
-html[data-theme-mode='dark'] .preview pre .hljs-title,
-html[data-theme-mode='dark'] .preview pre .hljs-built_in { color: #c99bf0; }
-html[data-theme-mode='dark'] .preview pre .hljs-string,
-html[data-theme-mode='dark'] .preview pre .hljs-attr,
-html[data-theme-mode='dark'] .preview pre .hljs-number { color: #8bd5ca; }
-html[data-theme-mode='dark'] .preview pre .hljs-comment { color: #b3afc2; }
-html[data-theme-mode='dark'] .preview pre .hljs-literal,
-html[data-theme-mode='dark'] .preview pre .hljs-type,
-html[data-theme-mode='dark'] .preview pre .hljs-variable,
-html[data-theme-mode='dark'] .preview pre .hljs-name { color: #6bb2f5; }
 
 .preview :not(pre) > code {
   background: rgba(127, 35, 204, 0.12);

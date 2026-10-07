@@ -224,6 +224,8 @@ export const api = {
   getTree: (courseId: number) => request<LearningItemTree[]>(`/courses/${courseId}/tree`),
   setLastPosition: (courseId: number, itemId: number) =>
     request(`/courses/${courseId}/last-position`, { method: 'PUT', body: JSON.stringify({ item_id: itemId }) }),
+  completeItem: (courseId: number, itemId: number) =>
+    request(`/courses/${courseId}/items/${itemId}/complete`, { method: 'PUT' }),
   getItem: (id: number) => request<LearningItem>(`/courses/items/${id}`),
   updateItem: (id: number, patch: Partial<Pick<LearningItem, 'title' | 'content' | 'description'>>) =>
     request<LearningItem>(`/courses/items/${id}`, { method: 'PUT', body: JSON.stringify(patch) }),

@@ -483,6 +483,7 @@ export default function CoursePage() {
   const [history, setHistory] = useState<Submission[]>([]);
   const [problem, setProblem] = useState<ProblemForStudent | null>(null);
   const [error, setError] = useState('');
+  const [lectureNavigationBusy, setLectureNavigationBusy] = useState(false);
   const pollTimer = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
@@ -560,6 +561,33 @@ export default function CoursePage() {
     }
   };
 
+  const lectureItems = flatten(tree).filter((item) => item.type === 'theory' && item.unlocked);
+  const lectureIndex = selected?.type === 'theory'
+    ? lectureItems.findIndex((item) => item.id === selected.id)
+    : -1;
+  const previousLecture = lectureIndex > 0 ? lectureItems[lectureIndex - 1] : null;
+  const nextLecture = lectureIndex >= 0 && lectureIndex < lectureItems.length - 1
+    ? lectureItems[lectureIndex + 1]
+    : null;
+
+  const moveLecture = async (target: LearningItemTree, completeCurrent: boolean) => {
+    if (!selected || lectureNavigationBusy) return;
+    setLectureNavigationBusy(true);
+    setError('');
+    try {
+      if (completeCurrent) await api.completeItem(Number(courseId), selected.id);
+      await api.setLastPosition(Number(courseId), target.id);
+      const refreshedTree = await api.getTree(Number(courseId));
+      setTree(refreshedTree);
+      const refreshedTarget = flatten(refreshedTree).find((item) => item.id === target.id) || target;
+      selectItem(refreshedTarget);
+    } catch (e: any) {
+      setError(e.message);
+    } finally {
+      setLectureNavigationBusy(false);
+    }
+  };
+
   return (
     <Layout>
       <Box sx={{ display: 'flex' }}>
@@ -606,6 +634,24 @@ export default function CoursePage() {
               <Box>
                 <Typography variant="h2" sx={{ mb: 2 }}>{selected.title}</Typography>
                 <Box className="preview" dangerouslySetInnerHTML={{ __html: renderContentHtml(selected.content || selected.description || '') }} />
+                {selected.type === 'theory' && (
+                  <Stack direction="row" justifyContent="space-between" sx={{ mt: 4 }}>
+                    <Button
+                      variant="outlined"
+                      disabled={!previousLecture || lectureNavigationBusy}
+                      onClick={() => previousLecture && moveLecture(previousLecture, false)}
+                    >
+                      Назад
+                    </Button>
+                    <Button
+                      variant="contained"
+                      disabled={!nextLecture || lectureNavigationBusy}
+                      onClick={() => nextLecture && moveLecture(nextLecture, true)}
+                    >
+                      Дальше
+                    </Button>
+                  </Stack>
+                )}
               </Box>
             )}
 

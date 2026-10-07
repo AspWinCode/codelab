@@ -8,7 +8,7 @@ import { ThemeModeProvider } from './theme/ThemeModeContext';
 import './styles.css';
 // EDT-005: подсветка кода и рендер LaTeX-формул в предпросмотре. Блоки кода
 // Базовая light-палитра hljs переопределяется CSS-токенами для dark mode.
-import 'highlight.js/styles/github.css';
+import 'highlight.js/styles/github-dark.css';
 import 'katex/dist/katex.min.css';
 
 ReactDOM.createRoot(document.getElementById('root')!).render(

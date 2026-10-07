@@ -190,12 +190,16 @@ def test_last_position_saves_for_enrolled_course(client, db_session):
     completion = db_session.query(ItemCompletion).filter(
         ItemCompletion.user_id == student.id,
         ItemCompletion.item_id == item.id,
-    ).one()
-    assert completion.item_id == item.id
+    ).first()
+    assert completion is None
 
     tree = client.get(f"/api/courses/{course.id}/tree")
     assert tree.status_code == 200
-    assert tree.json()[0]["completed"] is True
+    assert tree.json()[0]["completed"] is False
+
+    complete = client.put(f"/api/courses/{course.id}/items/{item.id}/complete")
+    assert complete.status_code == 200
+    assert client.get(f"/api/courses/{course.id}/tree").json()[0]["completed"] is True
 
 
 def test_last_position_does_not_complete_gradable_item(client, db_session):
