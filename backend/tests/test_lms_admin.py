@@ -77,6 +77,42 @@ def test_full_authoring_and_publish_flow(client, db_session):
     assert db_course.active_version_id is not None
 
 
+def test_teacher_can_read_published_tree_to_select_projects(client, db_session):
+    course = Course(title="Курс преподавателя")
+    db_session.add(course)
+    db_session.flush()
+    published = CourseVersion(
+        course_id=course.id,
+        version_number=1,
+        published_at=datetime.now(timezone.utc),
+    )
+    draft = CourseVersion(course_id=course.id, version_number=2)
+    db_session.add_all([published, draft])
+    db_session.flush()
+    course.active_version_id = published.id
+    published_project = LearningItem(
+        course_version_id=published.id,
+        type=LearningItemType.PROJECT,
+        title="Проект для проверки",
+    )
+    draft_project = LearningItem(
+        course_version_id=draft.id,
+        type=LearningItemType.PROJECT,
+        title="Черновой проект",
+    )
+    db_session.add_all([published_project, draft_project])
+    db_session.commit()
+
+    qs = _staff_qs(external_ref="lp-teacher-1", full_name="Преподаватель", role="teacher")
+    response = client.get(
+        f"/api/lms-admin/courses/{course.id}/tree?{qs}",
+        headers={"X-LP-Signature": _sig("lp-teacher-1")},
+    )
+
+    assert response.status_code == 200
+    assert [node["title"] for node in response.json()] == ["Проект для проверки"]
+
+
 def test_list_and_grade_submissions(client, db_session):
     sig = _sig("lp-user-2")
     qs = _staff_qs(external_ref="lp-user-2", full_name="Пётр Тренер", role="teacher")

@@ -15,7 +15,7 @@ from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.models import Course, LearningItem, LoginEvent, User
+from app.models import Course, CourseVersion, LearningItem, LoginEvent, User
 from app.schemas import (
     AdminLoginEventOut,
     AdminSystemStatusOut,
@@ -204,9 +204,22 @@ def archive_item(
 
 @router.get("/courses/{course_id}/tree", response_model=list[LearningItemTree])
 def get_tree(course_id: int, db: Session = Depends(get_db), staff: User = Depends(resolve_staff_user)):
-    """Всегда черновик — это рабочая версия методиста, не то, что видят ученики."""
-    course_admin.ensure_course_owner(course_admin.get_course_or_404(db, course_id), staff)
-    version = course_admin.get_draft_version(db, course_id)
+    """Методист получает свой черновик; преподаватель — опубликованное
+    дерево, чтобы выбрать проект для проверки работ учеников."""
+    course = course_admin.get_course_or_404(db, course_id)
+    if staff.role == "methodist":
+        course_admin.ensure_course_owner(course, staff)
+        version = course_admin.get_draft_version(db, course_id)
+    else:
+        if not course.active_version_id:
+            raise HTTPException(status_code=404, detail="Курс ещё не опубликован")
+        version = (
+            db.query(CourseVersion)
+            .filter(CourseVersion.id == course.active_version_id, CourseVersion.course_id == course_id)
+            .first()
+        )
+        if not version:
+            raise HTTPException(status_code=404, detail="Опубликованная версия курса не найдена")
     items = db.query(LearningItem).filter(LearningItem.course_version_id == version.id).order_by(LearningItem.position).all()
     return course_admin.build_tree(items)
 
