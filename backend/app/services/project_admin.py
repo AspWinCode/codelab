@@ -50,16 +50,23 @@ def get_course_for_project_item(db: Session, item: LearningItem) -> Optional[Cou
 
 
 def ensure_student_project_access(db: Session, item: LearningItem, user_id: int) -> None:
-    """Project files are available only in the student's active course version."""
+    """Allow enrolled students to submit for projects in the published tree.
+
+    Students follow the course's active version in ``GET /courses/{id}/tree``.
+    Their enrollment can still point at the version that was active when they
+    were assigned, so requiring an exact version match here hides the upload
+    flow after the course is republished.
+    """
     course = get_course_for_project_item(db, item)
     if not course:
         raise HTTPException(status_code=404, detail="Курс проекта не найден")
+    if item.course_version_id != course.active_version_id:
+        raise HTTPException(status_code=404, detail="Проект не относится к опубликованной версии курса")
     enrollment = (
         db.query(Enrollment)
         .filter(
             Enrollment.user_id == user_id,
             Enrollment.course_id == course.id,
-            Enrollment.course_version_id == item.course_version_id,
             Enrollment.status == EnrollmentStatus.ACTIVE,
         )
         .first()

@@ -120,6 +120,42 @@ def test_project_requires_active_enrollment(client, db_session):
     ).status_code == 403
 
 
+def test_enrolled_student_can_submit_to_project_after_course_republish(client, db_session):
+    """The student tree uses the active version even when enrollment records
+    the version that was published when the student was assigned the course.
+    """
+    course, old_version, _ = _make_published_project(db_session)
+    student = make_user(db_session, "student", "lp-project-old-enrollment-version")
+    _enroll(db_session, student, course, old_version)
+
+    new_version = CourseVersion(
+        course_id=course.id,
+        version_number=2,
+        published_at=datetime.now(timezone.utc),
+    )
+    db_session.add(new_version)
+    db_session.flush()
+    course.active_version_id = new_version.id
+    item = LearningItem(
+        course_version_id=new_version.id,
+        type=LearningItemType.PROJECT,
+        title="Проект в новой версии",
+    )
+    db_session.add(item)
+    db_session.commit()
+    db_session.refresh(item)
+    as_user(client, student)
+
+    submission = client.get(f"/api/projects/items/{item.id}/submission")
+    assert submission.status_code == 200
+
+    upload = client.post(
+        f"/api/projects/items/{item.id}/files",
+        files={"file": ("solution.py", io.BytesIO(b"print(1)"), "text/x-python")},
+    )
+    assert upload.status_code == 201
+
+
 def test_student_cannot_submit_without_files(client, db_session):
     course, version, item = _make_published_project(db_session)
     student = make_user(db_session, "student", "lp-student-2")
