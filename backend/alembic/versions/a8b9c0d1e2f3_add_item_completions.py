@@ -1,14 +1,14 @@
 """Store completion state for non-gradable course materials.
 
 Revision ID: a8b9c0d1e2f3
-Revises: f6a7b8c9d0e1
+Revises: c7d8e9f0a1b2
 """
 from alembic import op
 import sqlalchemy as sa
 
 
 revision = "a8b9c0d1e2f3"
-down_revision = "f6a7b8c9d0e1"
+down_revision = "c7d8e9f0a1b2"
 branch_labels = None
 depends_on = None
 
