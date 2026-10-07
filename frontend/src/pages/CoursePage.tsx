@@ -415,7 +415,7 @@ function TreeNode({ item, depth, selectedId, onSelect }: {
           </ListItemIcon>
           <ListItemText
             primary={item.title}
-            secondary={TYPE_LABEL[item.type] || item.type}
+            secondary={isStructural ? undefined : TYPE_LABEL[item.type] || item.type}
             primaryTypographyProps={{ fontSize: '0.78rem', fontWeight: 700, lineHeight: 1.2 }}
             secondaryTypographyProps={{ fontSize: '0.65rem', lineHeight: 1.1 }}
           />
@@ -561,13 +561,15 @@ export default function CoursePage() {
     }
   };
 
-  const lectureItems = flatten(tree).filter((item) => item.type === 'theory' && item.unlocked);
+  const navigationItems = flatten(tree).filter((item) =>
+    item.unlocked && !['module', 'submodule', 'topic', 'subtopic'].includes(item.type),
+  );
   const lectureIndex = selected?.type === 'theory'
-    ? lectureItems.findIndex((item) => item.id === selected.id)
+    ? navigationItems.findIndex((item) => item.id === selected.id)
     : -1;
-  const previousLecture = lectureIndex > 0 ? lectureItems[lectureIndex - 1] : null;
-  const nextLecture = lectureIndex >= 0 && lectureIndex < lectureItems.length - 1
-    ? lectureItems[lectureIndex + 1]
+  const previousLecture = lectureIndex > 0 ? navigationItems[lectureIndex - 1] : null;
+  const nextLecture = lectureIndex >= 0 && lectureIndex < navigationItems.length - 1
+    ? navigationItems[lectureIndex + 1]
     : null;
 
   const moveLecture = async (target: LearningItemTree, completeCurrent: boolean) => {
@@ -598,9 +600,6 @@ export default function CoursePage() {
             '& .MuiDrawer-paper': { width: DRAWER_WIDTH, position: 'sticky', top: 64, height: 'calc(100vh - 64px)' },
           }}
         >
-          <Typography variant="subtitle2" sx={{ px: 2, pt: 2, pb: 1, color: 'text.secondary' }}>
-            Курс #{courseId}
-          </Typography>
           <List dense>
             {tree.map((item) => (
               <TreeNode key={item.id} item={item} depth={0} selectedId={selected?.id ?? null} onSelect={selectItem} />

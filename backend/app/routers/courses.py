@@ -170,11 +170,21 @@ def get_tree(course_id: int, db: Session = Depends(get_db), user: User = Depends
         raise HTTPException(status_code=404, detail="Курс не найден")
 
     if user.role == "student":
-        # STU-002/STU-003: ученик видит только опубликованную версию, прогресс
-        # считается по ней и не может поменяться из-за правок черновика.
-        if not course.active_version_id:
+        # Enrollment pins the published version assigned to this student.
+        # After republishing, the active version may be newer than the one
+        # accepted by their enrollment, so navigation must use the pinned one.
+        enrollment = (
+            db.query(Enrollment)
+            .filter(
+                Enrollment.user_id == user.id,
+                Enrollment.course_id == course_id,
+                Enrollment.status == EnrollmentStatus.ACTIVE,
+            )
+            .first()
+        )
+        version_id = enrollment.course_version_id if enrollment and enrollment.course_version_id else course.active_version_id
+        if not version_id:
             raise HTTPException(status_code=404, detail="Курс ещё не опубликован")
-        version_id = course.active_version_id
     else:
         course_admin.ensure_course_owner(course, user)
         version_id = course_admin.get_draft_version(db, course_id).id
