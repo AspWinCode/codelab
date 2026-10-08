@@ -113,6 +113,50 @@ def test_teacher_can_read_published_tree_to_select_projects(client, db_session):
     assert [node["title"] for node in response.json()] == ["Проект для проверки"]
 
 
+def test_admin_gets_draft_tree_after_publish_and_can_add_item(client, db_session):
+    """Регресс: LMS мапит свои роли admin/owner/manager в staff_role="admin"
+    (как и methodist, это управляющая роль — см. ensure_course_owner). После
+    публикации курса get_tree должен отдавать admin тот же ЧЕРНОВИК, что и
+    методисту, а не замороженное опубликованное дерево с id из другой
+    course_version_id — иначе "+ Материал" с parent_id оттуда бьёт в 404
+    "Родительский элемент не найден в черновике этого курса" (create_item
+    ищет parent_id только среди элементов текущего черновика)."""
+    methodist_sig = _sig("lp-user-1")
+    methodist_qs = _staff_qs()
+
+    course = client.post(
+        f"/api/lms-admin/courses?{methodist_qs}", json={"title": "C"}, headers={"X-LP-Signature": methodist_sig},
+    ).json()
+    module = client.post(
+        f"/api/lms-admin/courses/{course['id']}/items?{methodist_qs}",
+        json={"type": "module", "title": "Модуль 1"},
+        headers={"X-LP-Signature": methodist_sig},
+    ).json()
+    publish_resp = client.post(
+        f"/api/lms-admin/courses/{course['id']}/publish?{methodist_qs}", headers={"X-LP-Signature": methodist_sig},
+    )
+    assert publish_resp.status_code == 200
+
+    admin_sig = _sig("lp-admin-1")
+    admin_qs = _staff_qs(external_ref="lp-admin-1", full_name="Админ", role="admin")
+
+    tree = client.get(
+        f"/api/lms-admin/courses/{course['id']}/tree?{admin_qs}", headers={"X-LP-Signature": admin_sig},
+    ).json()
+    assert len(tree) == 1 and tree[0]["title"] == "Модуль 1"
+    draft_module_id = tree[0]["id"]
+    # Клон публикации завёл НОВЫЙ id элемента в черновике — id из
+    # опубликованной версии (module["id"]) больше не валиден как parent_id.
+    assert draft_module_id != module["id"]
+
+    created = client.post(
+        f"/api/lms-admin/courses/{course['id']}/items?{admin_qs}",
+        json={"type": "theory", "title": "Урок 1", "parent_id": draft_module_id},
+        headers={"X-LP-Signature": admin_sig},
+    )
+    assert created.status_code == 200, created.text
+
+
 def test_list_and_grade_submissions(client, db_session):
     sig = _sig("lp-user-2")
     qs = _staff_qs(external_ref="lp-user-2", full_name="Пётр Тренер", role="teacher")

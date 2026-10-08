@@ -204,10 +204,14 @@ def archive_item(
 
 @router.get("/courses/{course_id}/tree", response_model=list[LearningItemTree])
 def get_tree(course_id: int, db: Session = Depends(get_db), staff: User = Depends(resolve_staff_user)):
-    """Методист получает свой черновик; преподаватель — опубликованное
-    дерево, чтобы выбрать проект для проверки работ учеников."""
+    """Методист и admin (управляющие роли — см. ensure_course_owner) получают
+    черновик для редактирования; преподаватель — только опубликованное
+    дерево, чтобы выбрать проект для проверки работ учеников. Иначе "+
+    Материал" на узле из опубликованного дерева бьёт в create_item, который
+    ищет parent_id среди элементов ЧЕРНОВИКА — и падает 404, потому что
+    id узлов опубликованной и черновой версий не совпадают."""
     course = course_admin.get_course_or_404(db, course_id)
-    if staff.role == "methodist":
+    if staff.role in ("methodist", "admin"):
         course_admin.ensure_course_owner(course, staff)
         version = course_admin.get_draft_version(db, course_id)
     else:
