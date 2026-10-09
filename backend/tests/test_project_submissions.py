@@ -86,6 +86,76 @@ def test_student_can_attach_file_submit_and_not_edit_after(client, db_session):
     assert again.status_code == 409
 
 
+def test_student_sees_attached_files_after_reloading_submission(client, db_session):
+    course, version, item = _make_published_project(db_session)
+    student = make_user(db_session, "student", "lp-project-reload")
+    _enroll(db_session, student, course, version)
+    as_user(client, student)
+
+    upload = client.post(
+        f"/api/projects/items/{item.id}/files",
+        files={"file": ("main.py", io.BytesIO(b"print(1)"), "text/x-python")},
+    )
+    assert upload.status_code == 201
+    second = client.post(
+        f"/api/projects/items/{item.id}/files",
+        files={"file": ("README.md", io.BytesIO(b"# project"), "text/markdown")},
+    )
+    assert second.status_code == 201
+
+    reloaded = client.get(f"/api/projects/items/{item.id}/submission")
+    assert reloaded.status_code == 200
+    assert {f["original_filename"] for f in reloaded.json()["files"]} == {"main.py", "README.md"}
+
+
+def test_project_requires_active_enrollment(client, db_session):
+    course, version, item = _make_published_project(db_session)
+    student = make_user(db_session, "student", "lp-project-no-access")
+    as_user(client, student)
+
+    assert client.get(f"/api/projects/items/{item.id}/submission").status_code == 403
+    assert client.post(
+        f"/api/projects/items/{item.id}/files",
+        files={"file": ("solution.py", io.BytesIO(b"print(1)"), "text/x-python")},
+    ).status_code == 403
+
+
+def test_enrolled_student_can_submit_to_project_after_course_republish(client, db_session):
+    """The student tree uses the active version even when enrollment records
+    the version that was published when the student was assigned the course.
+    """
+    course, old_version, _ = _make_published_project(db_session)
+    student = make_user(db_session, "student", "lp-project-old-enrollment-version")
+    _enroll(db_session, student, course, old_version)
+
+    new_version = CourseVersion(
+        course_id=course.id,
+        version_number=2,
+        published_at=datetime.now(timezone.utc),
+    )
+    db_session.add(new_version)
+    db_session.flush()
+    course.active_version_id = new_version.id
+    item = LearningItem(
+        course_version_id=new_version.id,
+        type=LearningItemType.PROJECT,
+        title="Проект в новой версии",
+    )
+    db_session.add(item)
+    db_session.commit()
+    db_session.refresh(item)
+    as_user(client, student)
+
+    submission = client.get(f"/api/projects/items/{item.id}/submission")
+    assert submission.status_code == 200
+
+    upload = client.post(
+        f"/api/projects/items/{item.id}/files",
+        files={"file": ("solution.py", io.BytesIO(b"print(1)"), "text/x-python")},
+    )
+    assert upload.status_code == 201
+
+
 def test_student_cannot_submit_without_files(client, db_session):
     course, version, item = _make_published_project(db_session)
     student = make_user(db_session, "student", "lp-student-2")
@@ -231,3 +301,96 @@ def test_student_cannot_download_others_file(client, db_session):
     as_user(client, other)
     resp = client.get(f"/api/projects/files/{file_id}/download")
     assert resp.status_code == 403
+
+
+def _capture_webhook_calls(monkeypatch):
+    """Подменяет исходящий вебхук в LMS мок-функцией, которая просто
+    запоминает kwargs вызова — без реального HTTP (best-effort доставка,
+    см. app/services/lms_client.py), чтобы тест не зависел от сети."""
+    calls: list[dict] = []
+
+    async def fake_notify(**kwargs):
+        calls.append(kwargs)
+
+    monkeypatch.setattr("app.services.project_admin.notify_project_submission_webhook", fake_notify)
+    return calls
+
+
+def test_first_submission_fires_project_submitted_webhook(client, db_session, monkeypatch):
+    calls = _capture_webhook_calls(monkeypatch)
+
+    course, version, item = _make_published_project(db_session)
+    student = make_user(db_session, "student", "lp-student-9")
+    _enroll(db_session, student, course, version)
+    as_user(client, student)
+
+    sub_id = client.get(f"/api/projects/items/{item.id}/submission").json()["id"]
+    client.post(f"/api/projects/items/{item.id}/files", files={"file": ("a.py", io.BytesIO(b"1"), "text/x-python")})
+    submitted = client.post(f"/api/projects/submissions/{sub_id}/submit")
+    assert submitted.status_code == 200
+
+    assert len(calls) == 1
+    call = calls[0]
+    assert call["event"] == "project_submitted"
+    assert call["submission_id"] == sub_id
+    assert call["course_id"] == course.id
+    assert call["item_id"] == item.id
+    assert call["attempt_number"] == 1
+    assert call["student_external_ref"] == "lp-student-9"
+    assert call["submitted_at"] is not None
+
+
+def test_resubmission_after_needs_revision_fires_project_resubmitted_webhook(client, db_session, monkeypatch):
+    calls = _capture_webhook_calls(monkeypatch)
+
+    course, version, item = _make_published_project(db_session)
+    student = make_user(db_session, "student", "lp-student-10")
+    _enroll(db_session, student, course, version)
+    as_user(client, student)
+
+    sub_id = client.get(f"/api/projects/items/{item.id}/submission").json()["id"]
+    client.post(f"/api/projects/items/{item.id}/files", files={"file": ("a.py", io.BytesIO(b"1"), "text/x-python")})
+    client.post(f"/api/projects/submissions/{sub_id}/submit")
+
+    client.put(
+        f"/api/lms-admin/projects/submissions/{sub_id}/review?{_staff_qs()}",
+        json={"decision": "needs_revision", "comment": "Поправь и досдай"},
+        headers=_staff_headers(),
+    )
+
+    as_user(client, student)
+    client.post(f"/api/projects/items/{item.id}/files", files={"file": ("b.py", io.BytesIO(b"2"), "text/x-python")})
+    new_sub = client.get(f"/api/projects/items/{item.id}/submission").json()
+    assert new_sub["attempt_number"] == 2
+    resubmitted = client.post(f"/api/projects/submissions/{new_sub['id']}/submit")
+    assert resubmitted.status_code == 200
+
+    # Первая сдача — "project_submitted", вторая (после needs_revision) —
+    # "project_resubmitted", независимо от того, сколько раз возвращали.
+    assert [c["event"] for c in calls] == ["project_submitted", "project_resubmitted"]
+    resubmit_call = calls[1]
+    assert resubmit_call["submission_id"] == new_sub["id"]
+    assert resubmit_call["attempt_number"] == 2
+    assert resubmit_call["student_external_ref"] == "lp-student-10"
+
+
+def test_webhook_failure_does_not_break_submit(client, db_session, monkeypatch):
+    """Best-effort доставка (см. README/запрос): отказ вебхука (любого рода,
+    не только HTTP-ошибка) не должен ломать сам сценарий сдачи — ученик
+    всё равно должен увидеть submitted."""
+    async def failing_notify(**kwargs):
+        raise RuntimeError("LMS недоступен")
+
+    monkeypatch.setattr("app.services.project_admin.notify_project_submission_webhook", failing_notify)
+
+    course, version, item = _make_published_project(db_session)
+    student = make_user(db_session, "student", "lp-student-11")
+    _enroll(db_session, student, course, version)
+    as_user(client, student)
+
+    sub_id = client.get(f"/api/projects/items/{item.id}/submission").json()["id"]
+    client.post(f"/api/projects/items/{item.id}/files", files={"file": ("a.py", io.BytesIO(b"1"), "text/x-python")})
+
+    submitted = client.post(f"/api/projects/submissions/{sub_id}/submit")
+    assert submitted.status_code == 200
+    assert submitted.json()["status"] == "submitted"

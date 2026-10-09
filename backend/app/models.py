@@ -286,6 +286,27 @@ class Enrollment(Base):
     __table_args__ = (UniqueConstraint("user_id", "course_id", name="uq_user_course_enrollment"),)
 
 
+class ItemCompletion(Base):
+    """Факт прохождения учеником контентного элемента курса.
+
+    Задачи и тесты получают completed из своих результатов, а теория,
+    видео и другие материалы не имеют посылки/попытки, поэтому их статус
+    хранится отдельно.
+    """
+
+    __tablename__ = "item_completions"
+
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    item_id = Column(Integer, ForeignKey("learning_items.id"), nullable=False, index=True)
+    completed_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    user = relationship("User")
+    item = relationship("LearningItem")
+
+    __table_args__ = (UniqueConstraint("user_id", "item_id", name="uq_user_item_completion"),)
+
+
 class Draft(Base):
     """IDE-002: последний сохранённый код ученика по задаче."""
 

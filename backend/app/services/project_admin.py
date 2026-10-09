@@ -5,6 +5,7 @@
 Не путать с course_admin.py::list_course_submissions/apply_manual_grade —
 это для type=task (код на автопроверку по ProblemRevision), у проекта своя
 модель (ProjectSubmission/ProjectFile/ProjectFileComment, см. models.py)."""
+import logging
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -33,8 +34,11 @@ from app.schemas import (
     ProjectSubmissionOut,
     ProjectSubmissionReviewOut,
 )
+from app.services.lms_client import notify_project_submission_webhook
 from app.services.notifications import notify
 from app.services.project_files import delete_project_file, project_file_path, save_project_file
+
+logger = logging.getLogger(__name__)
 
 
 def get_project_item_or_404(db: Session, item_id: int) -> LearningItem:
@@ -47,6 +51,32 @@ def get_project_item_or_404(db: Session, item_id: int) -> LearningItem:
 def get_course_for_project_item(db: Session, item: LearningItem) -> Optional[Course]:
     version = db.query(CourseVersion).filter(CourseVersion.id == item.course_version_id).first()
     return db.query(Course).filter(Course.id == version.course_id).first() if version else None
+
+
+def ensure_student_project_access(db: Session, item: LearningItem, user_id: int) -> None:
+    """Allow enrolled students to submit for projects in the published tree.
+
+    Students follow the course's active version in ``GET /courses/{id}/tree``.
+    Their enrollment can still point at the version that was active when they
+    were assigned, so requiring an exact version match here hides the upload
+    flow after the course is republished.
+    """
+    course = get_course_for_project_item(db, item)
+    if not course:
+        raise HTTPException(status_code=404, detail="Курс проекта не найден")
+    if item.course_version_id != course.active_version_id:
+        raise HTTPException(status_code=404, detail="Проект не относится к опубликованной версии курса")
+    enrollment = (
+        db.query(Enrollment)
+        .filter(
+            Enrollment.user_id == user_id,
+            Enrollment.course_id == course.id,
+            Enrollment.status == EnrollmentStatus.ACTIVE,
+        )
+        .first()
+    )
+    if not enrollment:
+        raise HTTPException(status_code=403, detail="Вы не записаны на этот курс")
 
 
 def get_course_for_project_submission(db: Session, submission_id: int) -> Optional[Course]:
@@ -140,7 +170,8 @@ def _latest_submission(db: Session, item_id: int, user_id: int) -> Optional[Proj
 def get_or_create_current_submission(db: Session, item_id: int, user_id: int) -> ProjectSubmission:
     """Для GET — читает, не мутирует переходы статуса; только заводит
     первую попытку, если ученик ещё вообще не открывал сдачу."""
-    get_project_item_or_404(db, item_id)
+    item = get_project_item_or_404(db, item_id)
+    ensure_student_project_access(db, item, user_id)
     submission = _latest_submission(db, item_id, user_id)
     if submission:
         return submission
@@ -179,8 +210,24 @@ def get_file_or_404(db: Session, file_id: int) -> ProjectFile:
 
 
 async def attach_file(db: Session, item_id: int, user_id: int, filename: str, content_type: str, read_chunk) -> ProjectFile:
-    submission = get_attachable_submission(db, item_id, user_id)
+    item = get_project_item_or_404(db, item_id)
+    ensure_student_project_access(db, item, user_id)
+    current = get_or_create_current_submission(db, item_id, user_id)
+    # Validate and persist the upload before creating a retry attempt. An invalid
+    # upload must not leave an empty attempt behind.
     saved = await save_project_file(filename, content_type, read_chunk)
+    submission = current
+    if current.status == ProjectSubmissionStatus.NEEDS_REVISION:
+        submission = ProjectSubmission(
+            learning_item_id=item_id, user_id=user_id, attempt_number=current.attempt_number + 1,
+        )
+        db.add(submission)
+        db.flush()
+    elif current.status != ProjectSubmissionStatus.DRAFT:
+        delete_project_file(saved.stored_name)
+        if current.status == ProjectSubmissionStatus.SUBMITTED:
+            raise HTTPException(status_code=409, detail="Работа уже отправлена на проверку")
+        raise HTTPException(status_code=409, detail="Работа уже принята")
     f = ProjectFile(
         submission_id=submission.id,
         original_filename=filename or saved.stored_name,
@@ -189,7 +236,12 @@ async def attach_file(db: Session, item_id: int, user_id: int, filename: str, co
         size=saved.size,
     )
     db.add(f)
-    db.commit()
+    try:
+        db.commit()
+    except Exception:
+        db.rollback()
+        delete_project_file(saved.stored_name)
+        raise
     db.refresh(f)
     return f
 
@@ -206,7 +258,7 @@ def remove_own_file(db: Session, file_id: int, user_id: int) -> None:
     db.commit()
 
 
-def submit_submission(db: Session, submission_id: int, user_id: int) -> ProjectSubmission:
+async def submit_submission(db: Session, submission_id: int, user_id: int) -> ProjectSubmission:
     submission = db.query(ProjectSubmission).filter(ProjectSubmission.id == submission_id).first()
     if not submission or submission.user_id != user_id:
         raise HTTPException(status_code=404, detail="Сдача не найдена")
@@ -218,6 +270,31 @@ def submit_submission(db: Session, submission_id: int, user_id: int) -> ProjectS
     submission.submitted_at = datetime.now(timezone.utc)
     db.commit()
     db.refresh(submission)
+
+    try:
+        item = db.query(LearningItem).filter(LearningItem.id == submission.learning_item_id).first()
+        course = get_course_for_project_item(db, item) if item else None
+        student = db.query(User).filter(User.id == submission.user_id).first()
+        if course and student:
+            # attempt_number > 1 возможен только через needs_revision -> новая
+            # попытка (см. get_attachable_submission) — значит это пересдача,
+            # сколько бы раз до этого ни возвращали на доработку.
+            event = "project_submitted" if submission.attempt_number == 1 else "project_resubmitted"
+            await notify_project_submission_webhook(
+                event=event,
+                submission_id=submission.id,
+                course_id=course.id,
+                item_id=submission.learning_item_id,
+                attempt_number=submission.attempt_number,
+                submitted_at=submission.submitted_at,
+                student_external_ref=student.external_ref,
+            )
+    except Exception:
+        # Best-effort (см. README): ученик должен увидеть свою работу
+        # отправленной независимо от того, что происходит с уведомлением
+        # тренера — сбой вебхука не должен откатывать уже сохранённую сдачу.
+        logger.exception("Не удалось отправить вебхук сдачи проекта %s в LMS", submission.id)
+
     return submission
 
 

@@ -17,6 +17,30 @@ def test_subprocess_backend_runs_python3(monkeypatch):
     assert result.stdout.strip() == "2"
 
 
+def test_multiple_input_calls_read_separate_lines(monkeypatch):
+    """Баг: кнопка "Запустить" падала с EOFError на второй/третьей строке
+    input(), потому что stdin было негде взять вторую строку (однострочное
+    поле на фронтенде, см. CoursePage.tsx) — здесь проверяем сам Runner:
+    три строки stdin корректно уходят в три отдельных input()."""
+    monkeypatch.setattr(settings, "runner_backend", "subprocess")
+    code = "a = input()\nb = input()\nc = input()\nprint(int(a) + int(b) + int(c))"
+    result = execute_code("python3", code, "2\n3\n4\n")
+    assert result.stderr == ""
+    assert result.stdout.strip() == "9"
+
+
+def test_crlf_stdin_normalized_to_lf(monkeypatch):
+    """stdin со вставленными Windows-переносами ("\\r\\n") не должен оставлять
+    "\\r" в значении, прочитанном input() — иначе int("2\\r") падает/не
+    совпадает с ожидаемым выводом теста, хотя для пользователя это та же
+    строка "2"."""
+    monkeypatch.setattr(settings, "runner_backend", "subprocess")
+    code = "a = input()\nb = input()\nprint(repr(a), repr(b))"
+    result = execute_code("python3", code, "2\r\n3\r\n")
+    assert result.stderr == ""
+    assert result.stdout.strip() == "'2' '3'"
+
+
 def test_subprocess_backend_rejects_cpp(monkeypatch):
     monkeypatch.setattr(settings, "runner_backend", "subprocess")
     with pytest.raises(RuntimeError):

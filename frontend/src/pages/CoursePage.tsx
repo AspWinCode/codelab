@@ -1,7 +1,7 @@
-import { CheckCircle, CloseFullscreen, ExpandLess, ExpandMore, Lock, OpenInFull, RadioButtonUnchecked } from '@mui/icons-material';
+import { CheckCircle, CloseFullscreen, ExpandLess, ExpandMore, FolderOutlined, Lock, OpenInFull, RadioButtonUnchecked } from '@mui/icons-material';
 import {
   Alert, Box, Button, Checkbox, Chip, Container, Divider, Drawer, FormControlLabel,
-  FormGroup, List, ListItemButton, ListItemIcon, ListItemText, Paper, Stack, TextField, Typography,
+  FormGroup, List, ListItem, ListItemButton, ListItemIcon, ListItemText, Paper, Stack, TextField, Typography,
 } from '@mui/material';
 import { useEffect, useRef, useState } from 'react';
 import { useParams, useSearchParams } from 'react-router-dom';
@@ -40,17 +40,24 @@ function formatDateTime(iso: string): string {
 function ProjectView({ item }: { item: LearningItemTree }) {
   const [submission, setSubmission] = useState<ProjectSubmission | null>(null);
   const [error, setError] = useState('');
+  const [loading, setLoading] = useState(true);
   const [uploading, setUploading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
-  const load = () => {
-    api.getProjectSubmission(item.id).then(setSubmission).catch((e) => setError(e.message));
+  const load = async () => {
+    try {
+      setSubmission(await api.getProjectSubmission(item.id));
+    } catch (e: any) {
+      setError(e.message);
+    } finally {
+      setLoading(false);
+    }
   };
 
   useEffect(() => {
     setError('');
     setSubmission(null);
-    load();
+    void load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [item.id]);
 
@@ -62,10 +69,13 @@ function ProjectView({ item }: { item: LearningItemTree }) {
       for (const file of Array.from(files)) {
         await api.uploadProjectFile(item.id, file);
       }
-      load();
     } catch (e: any) {
       setError(e.message);
     } finally {
+      // Перечитываем состояние сервера даже при ошибке посередине —
+      // файлы, которые успели загрузиться до отказавшего, должны появиться
+      // в списке, а не выглядеть как "ничего не загрузилось".
+      await load();
       setUploading(false);
       if (fileInputRef.current) fileInputRef.current.value = '';
     }
@@ -91,6 +101,9 @@ function ProjectView({ item }: { item: LearningItemTree }) {
     }
   };
 
+  if (loading) {
+    return <Typography color="text.secondary">Загрузка файлов…</Typography>;
+  }
   if (!submission) {
     return (
       <Box>
@@ -421,37 +434,73 @@ function TreeNode({ item, depth, selectedId, onSelect }: {
 }) {
   const locked = !item.unlocked;
   const hasChildren = item.children.length > 0;
+  const isStructural = ['module', 'submodule', 'topic', 'subtopic'].includes(item.type);
   // Развёрнуто по умолчанию — прежнее поведение (все узлы всегда видны),
   // стрелка только добавляет возможность свернуть, не меняет дефолт.
   const [open, setOpen] = useState(true);
 
   return (
     <>
-      <ListItemButton
-        selected={selectedId === item.id}
-        disabled={locked}
-        onClick={() => !locked && onSelect(item)}
-        sx={{ pl: 2 + depth * 2 }}
-        dense
-      >
-        <ListItemIcon sx={{ minWidth: 30 }}>
-          {item.completed ? <CheckCircle fontSize="small" color="success" /> : locked ? <Lock fontSize="small" /> : <RadioButtonUnchecked fontSize="small" />}
-        </ListItemIcon>
-        <ListItemText
-          primary={item.title}
-          secondary={TYPE_LABEL[item.type] || item.type}
-          primaryTypographyProps={{ fontSize: '0.9rem', fontWeight: 500 }}
-          secondaryTypographyProps={{ fontSize: '0.75rem' }}
-        />
-        {hasChildren && (
-          <ListItemIcon
-            sx={{ minWidth: 24, justifyContent: 'flex-end', cursor: 'pointer' }}
-            onClick={(e) => { e.stopPropagation(); setOpen((v) => !v); }}
-          >
-            {open ? <ExpandLess fontSize="small" /> : <ExpandMore fontSize="small" />}
+      {isStructural ? (
+        <ListItem
+          dense
+          sx={{
+            pl: 1 + depth * 2,
+            pr: 1,
+            py: 0.35,
+            my: 0.25,
+            minHeight: 36,
+            bgcolor: item.type === 'module' ? 'action.hover' : 'action.selected',
+            borderLeft: '3px solid',
+            borderColor: item.type === 'module' ? 'primary.main' : 'secondary.main',
+            borderRadius: '0 8px 8px 0',
+          }}
+        >
+          <ListItemIcon sx={{ minWidth: 28, color: 'text.secondary' }}>
+            <FolderOutlined fontSize="small" />
           </ListItemIcon>
-        )}
-      </ListItemButton>
+          <ListItemText
+            primary={item.title}
+            secondary={isStructural ? undefined : TYPE_LABEL[item.type] || item.type}
+            primaryTypographyProps={{ fontSize: '0.78rem', fontWeight: 700, lineHeight: 1.2 }}
+            secondaryTypographyProps={{ fontSize: '0.65rem', lineHeight: 1.1 }}
+          />
+          {hasChildren && (
+            <ListItemIcon
+              sx={{ minWidth: 24, justifyContent: 'flex-end', cursor: 'pointer' }}
+              onClick={(e) => { e.stopPropagation(); setOpen((v) => !v); }}
+            >
+              {open ? <ExpandLess fontSize="small" /> : <ExpandMore fontSize="small" />}
+            </ListItemIcon>
+          )}
+        </ListItem>
+      ) : (
+        <ListItemButton
+          selected={selectedId === item.id}
+          disabled={locked}
+          onClick={() => !locked && onSelect(item)}
+          sx={{ pl: 2 + depth * 2 }}
+          dense
+        >
+          <ListItemIcon sx={{ minWidth: 30 }}>
+            {item.completed ? <CheckCircle fontSize="small" color="success" /> : locked ? <Lock fontSize="small" /> : <RadioButtonUnchecked fontSize="small" />}
+          </ListItemIcon>
+          <ListItemText
+            primary={item.title}
+            secondary={TYPE_LABEL[item.type] || item.type}
+            primaryTypographyProps={{ fontSize: '0.9rem', fontWeight: 500 }}
+            secondaryTypographyProps={{ fontSize: '0.75rem' }}
+          />
+          {hasChildren && (
+            <ListItemIcon
+              sx={{ minWidth: 24, justifyContent: 'flex-end', cursor: 'pointer' }}
+              onClick={(e) => { e.stopPropagation(); setOpen((v) => !v); }}
+            >
+              {open ? <ExpandLess fontSize="small" /> : <ExpandMore fontSize="small" />}
+            </ListItemIcon>
+          )}
+        </ListItemButton>
+      )}
       {hasChildren && open && item.children.map((c) => (
         <TreeNode key={c.id} item={c} depth={depth + 1} selectedId={selectedId} onSelect={onSelect} />
       ))}
@@ -480,6 +529,7 @@ export default function CoursePage() {
   const [history, setHistory] = useState<Submission[]>([]);
   const [problem, setProblem] = useState<ProblemForStudent | null>(null);
   const [error, setError] = useState('');
+  const [lectureNavigationBusy, setLectureNavigationBusy] = useState(false);
   const pollTimer = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
@@ -507,7 +557,9 @@ export default function CoursePage() {
     // загрузки problem, подставляется черновик/шаблон именно этой задачи.
     setCode('');
     setStdin('');
-    api.setLastPosition(Number(courseId), item.id).catch(() => {});
+    api.setLastPosition(Number(courseId), item.id)
+      .then(() => api.getTree(Number(courseId)).then(setTree))
+      .catch(() => {});
     if (item.type === 'task' && item.problem_revision_id) {
       api.mySubmissions(item.problem_revision_id).then(setHistory).catch(() => {});
       api.getProblem(item.problem_revision_id).then((p) => {
@@ -555,6 +607,35 @@ export default function CoursePage() {
     }
   };
 
+  const navigationItems = flatten(tree).filter((item) =>
+    item.unlocked && !['module', 'submodule', 'topic', 'subtopic'].includes(item.type),
+  );
+  const lectureIndex = selected?.type === 'theory'
+    ? navigationItems.findIndex((item) => item.id === selected.id)
+    : -1;
+  const previousLecture = lectureIndex > 0 ? navigationItems[lectureIndex - 1] : null;
+  const nextLecture = lectureIndex >= 0 && lectureIndex < navigationItems.length - 1
+    ? navigationItems[lectureIndex + 1]
+    : null;
+
+  const moveLecture = async (target: LearningItemTree, completeCurrent: boolean) => {
+    if (!selected || lectureNavigationBusy) return;
+    setLectureNavigationBusy(true);
+    setError('');
+    try {
+      if (completeCurrent) await api.completeItem(Number(courseId), selected.id);
+      await api.setLastPosition(Number(courseId), target.id);
+      const refreshedTree = await api.getTree(Number(courseId));
+      setTree(refreshedTree);
+      const refreshedTarget = flatten(refreshedTree).find((item) => item.id === target.id) || target;
+      selectItem(refreshedTarget);
+    } catch (e: any) {
+      setError(e.message);
+    } finally {
+      setLectureNavigationBusy(false);
+    }
+  };
+
   return (
     <Layout>
       <Box sx={{ display: 'flex' }}>
@@ -565,9 +646,6 @@ export default function CoursePage() {
             '& .MuiDrawer-paper': { width: DRAWER_WIDTH, position: 'sticky', top: 64, height: 'calc(100vh - 64px)' },
           }}
         >
-          <Typography variant="subtitle2" sx={{ px: 2, pt: 2, pb: 1, color: 'text.secondary' }}>
-            Курс #{courseId}
-          </Typography>
           <List dense>
             {tree.map((item) => (
               <TreeNode key={item.id} item={item} depth={0} selectedId={selected?.id ?? null} onSelect={selectItem} />
@@ -586,7 +664,7 @@ export default function CoursePage() {
               // ?task=<id> — черепашка хранит код/рисунок ученика в своём
               // localStorage по этому ключу, чтобы разные задания "Черепашка"
               // в разных уроках не делили один и тот же сохранённый прогресс.
-              iframeUrl={`${TURTLE_URL}?task=${selected.id}`}
+              iframeUrl={`${TURTLE_URL}?task=${selected.id}&blank=1`}
               iframeTitle="Черепашка"
               expandLabel="Черепашка на весь экран"
             />
@@ -600,7 +678,31 @@ export default function CoursePage() {
             {selected && selected.type !== 'task' && selected.type !== 'project' && (
               <Box>
                 <Typography variant="h2" sx={{ mb: 2 }}>{selected.title}</Typography>
-                <Box className="preview" dangerouslySetInnerHTML={{ __html: renderContentHtml(selected.content || selected.description || '') }} />
+                <Box
+                  className={`preview${selected.type === 'theory' ? ' lecture-content' : ''}`}
+                  onCopy={selected.type === 'theory' ? (event) => event.preventDefault() : undefined}
+                  onCut={selected.type === 'theory' ? (event) => event.preventDefault() : undefined}
+                  onContextMenu={selected.type === 'theory' ? (event) => event.preventDefault() : undefined}
+                  dangerouslySetInnerHTML={{ __html: renderContentHtml(selected.content || selected.description || '') }}
+                />
+                {selected.type === 'theory' && (
+                  <Stack direction="row" justifyContent="space-between" sx={{ mt: 4 }}>
+                    <Button
+                      variant="outlined"
+                      disabled={!previousLecture || lectureNavigationBusy}
+                      onClick={() => previousLecture && moveLecture(previousLecture, false)}
+                    >
+                      Назад
+                    </Button>
+                    <Button
+                      variant="contained"
+                      disabled={!nextLecture || lectureNavigationBusy}
+                      onClick={() => nextLecture && moveLecture(nextLecture, true)}
+                    >
+                      Дальше
+                    </Button>
+                  </Stack>
+                )}
               </Box>
             )}
 
@@ -635,8 +737,8 @@ export default function CoursePage() {
                         <Stack spacing={1}>
                           {problem.visible_tests.map((t, i) => (
                             <Stack key={i} direction="row" spacing={2}>
-                              <Box component="pre" sx={{ flex: 1, m: 0, fontFamily: FONT_CODE, fontSize: '0.8125rem', bgcolor: 'background.paper', border: '1px solid', borderColor: 'divider', borderRadius: 2, p: 1.5, whiteSpace: 'pre-wrap' }}>{t.input}</Box>
-                              <Box component="pre" sx={{ flex: 1, m: 0, fontFamily: FONT_CODE, fontSize: '0.8125rem', bgcolor: 'background.paper', border: '1px solid', borderColor: 'divider', borderRadius: 2, p: 1.5, whiteSpace: 'pre-wrap' }}>{t.expected}</Box>
+                              <Box component="pre" sx={{ flex: 1, m: 0, color: 'text.primary', fontFamily: FONT_CODE, fontSize: '0.8125rem', bgcolor: 'background.default', border: '1px solid', borderColor: 'divider', borderRadius: 2, p: 1.5, whiteSpace: 'pre-wrap' }}>{t.input}</Box>
+                              <Box component="pre" sx={{ flex: 1, m: 0, color: 'text.primary', fontFamily: FONT_CODE, fontSize: '0.8125rem', bgcolor: 'background.paper', border: '1px solid', borderColor: 'divider', borderRadius: 2, p: 1.5, whiteSpace: 'pre-wrap' }}>{t.expected}</Box>
                             </Stack>
                           ))}
                         </Stack>
@@ -652,7 +754,10 @@ export default function CoursePage() {
                   sx={{ mb: 1.5, '& .MuiOutlinedInput-root': { bgcolor: 'background.paper' } }}
                 />
                 <TextField
-                  label="stdin для «Запустить»" fullWidth size="small" value={stdin}
+                  label="stdin для «Запустить»" helperText="Каждое значение input() — с новой строки"
+                  multiline fullWidth minRows={2} maxRows={6}
+                  inputProps={{ style: { fontFamily: FONT_CODE } }}
+                  value={stdin}
                   onChange={(e) => setStdin(e.target.value)}
                   sx={{ mb: 2 }}
                 />

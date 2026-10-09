@@ -17,7 +17,7 @@ from app.models import (
     CourseStatus,
     CourseVersion,
     Draft,
-    LearningItem,
+    ItemCompletion, LearningItem,
     LearningItemType,
     ProblemRevision,
     QuizAttempt,
@@ -40,10 +40,9 @@ from app.schemas import (
 )
 from app.services.lms_client import notify_course_webhook
 from app.services.progress_calc import (
+    is_item_passed,
     is_item_unlocked,
     recompute_progress_for_quiz_attempt,
-    resolve_official_quiz_score,
-    resolve_official_score,
 )
 from app.services.tree_rules import validate_parent
 
@@ -155,12 +154,14 @@ def _strip_quiz_answers(nodes: list[LearningItemTree]) -> None:
 def build_student_tree(db: Session, user_id: int, items: list[LearningItem]) -> list[LearningItemTree]:
     items_by_id = {i.id: i for i in items}
     unlocked_ids = {i.id for i in items if is_item_unlocked(db, user_id, i, items_by_id)}
-    completed_ids = {
-        i.id for i in items
-        if (i.type == LearningItemType.TASK and i.problem_revision_id
-            and (resolve_official_score(db, user_id, i.problem_revision_id) or 0) > 0)
-        or (i.type == LearningItemType.QUIZ and (resolve_official_quiz_score(db, user_id, i.id) or 0) > 0)
-    }
+    completed_ids = {i.id for i in items if is_item_passed(db, user_id, i)}
+    completed_ids.update(
+        row.item_id
+        for row in db.query(ItemCompletion.item_id).filter(
+            ItemCompletion.user_id == user_id,
+            ItemCompletion.item_id.in_(items_by_id),
+        ).all()
+    )
     # Архивация каскадится на всё поддерево при самом действии (см.
     # set_item_archived), поэтому фильтровать по собственному is_archived
     # здесь достаточно — не может остаться неархивный потомок архивного узла.
@@ -168,6 +169,31 @@ def build_student_tree(db: Session, user_id: int, items: list[LearningItem]) -> 
     tree = build_tree(visible_items, unlocked_ids, completed_ids)
     _strip_quiz_answers(tree)
     return tree
+
+
+def mark_content_item_completed(db: Session, user_id: int, item: LearningItem) -> None:
+    """Отмечает материал пройденным при его открытии.
+
+    Структурные узлы и интерактивные/оцениваемые задания не закрываются
+    этим методом: у них собственные условия завершения.
+    """
+    completable_types = {
+        LearningItemType.THEORY,
+        LearningItemType.VIDEO,
+        LearningItemType.FILE,
+        LearningItemType.LINK,
+        LearningItemType.MANUAL,
+        LearningItemType.CHECKPOINT,
+    }
+    if item.type not in completable_types:
+        return
+    exists = db.query(ItemCompletion.id).filter(
+        ItemCompletion.user_id == user_id,
+        ItemCompletion.item_id == item.id,
+    ).first()
+    if not exists:
+        db.add(ItemCompletion(user_id=user_id, item_id=item.id))
+        db.commit()
 
 
 def create_course(db: Session, payload: CourseCreate, created_by_id: int | None) -> Course:

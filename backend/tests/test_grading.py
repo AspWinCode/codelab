@@ -16,7 +16,12 @@ from app.models import (
     User,
     Verdict,
 )
-from app.services.progress_calc import is_item_unlocked, recompute_progress_for_submission, resolve_official_score
+from app.services.progress_calc import (
+    is_item_passed,
+    is_item_unlocked,
+    recompute_progress_for_submission,
+    resolve_official_score,
+)
 
 
 def _make_course_with_task(db, scoring_policy="best", weight=1.0, required=True):
@@ -85,6 +90,8 @@ def test_manual_override_takes_precedence(db_session):
 
 
 def test_recompute_progress_after_submission(db_session):
+    """Полный балл (Accepted/100) — задача засчитана решённой, очки по
+    фактическому баллу (с учётом weight)."""
     course, version, problem, item = _make_course_with_task(db_session, weight=2.0)
     user = User(external_ref="lp-1", full_name="U", role="student")
     db_session.add(user)
@@ -92,7 +99,10 @@ def test_recompute_progress_after_submission(db_session):
     db_session.add(Enrollment(
         user_id=user.id, course_id=course.id, course_version_id=version.id, status=EnrollmentStatus.ACTIVE,
     ))
-    sub = Submission(user_id=user.id, problem_revision_id=problem.id, code="x", status=SubmissionStatus.DONE, score=50.0)
+    sub = Submission(
+        user_id=user.id, problem_revision_id=problem.id, code="x",
+        status=SubmissionStatus.DONE, verdict=Verdict.ACCEPTED, score=100.0,
+    )
     db_session.add(sub)
     db_session.commit()
 
@@ -103,7 +113,50 @@ def test_recompute_progress_after_submission(db_session):
     assert progress.completed_items == 1
     assert progress.total_items == 1
     assert progress.percent == 100.0
-    assert progress.points == 100  # score(50) * weight(2)
+    assert progress.points == 200  # score(100) * weight(2)
+
+
+def test_partial_score_not_counted_as_completed(db_session):
+    """Частичный результат (не все тесты прошли, score < 100, verdict
+    Wrong Answer) не должен засчитываться как решённая задача — только
+    полный балл. Очки за частичный прогресс всё равно копятся."""
+    course, version, problem, item = _make_course_with_task(db_session, weight=2.0)
+    user = User(external_ref="lp-1", full_name="U", role="student")
+    db_session.add(user)
+    db_session.flush()
+    db_session.add(Enrollment(
+        user_id=user.id, course_id=course.id, course_version_id=version.id, status=EnrollmentStatus.ACTIVE,
+    ))
+    sub = Submission(
+        user_id=user.id, problem_revision_id=problem.id, code="x",
+        status=SubmissionStatus.DONE, verdict=Verdict.WRONG_ANSWER, score=50.0,
+    )
+    db_session.add(sub)
+    db_session.commit()
+
+    assert is_item_passed(db_session, user.id, item) is False
+
+    recompute_progress_for_submission(db_session, sub)
+
+    progress = db_session.query(Progress).filter(Progress.user_id == user.id, Progress.course_id == course.id).first()
+    assert progress is not None
+    assert progress.completed_items == 0  # не решено — только частичный балл
+    assert progress.total_items == 1
+    assert progress.percent == 0.0
+    assert progress.points == 100  # очки всё же копятся: score(50) * weight(2)
+
+    # Если следом приходит полностью верное решение — задача засчитывается.
+    accepted = Submission(
+        user_id=user.id, problem_revision_id=problem.id, code="y",
+        status=SubmissionStatus.DONE, verdict=Verdict.ACCEPTED, score=100.0,
+    )
+    db_session.add(accepted)
+    db_session.commit()
+    recompute_progress_for_submission(db_session, accepted)
+
+    assert is_item_passed(db_session, user.id, item) is True
+    db_session.refresh(progress)
+    assert progress.completed_items == 1
 
 
 def test_item_unlocks_after_predecessor_passed(db_session):
@@ -124,7 +177,7 @@ def test_item_unlocks_after_predecessor_passed(db_session):
 
     assert is_item_unlocked(db_session, user.id, locked_item, items_by_id) is False
 
-    db_session.add(Submission(user_id=user.id, problem_revision_id=problem.id, code="x", status=SubmissionStatus.DONE, score=100.0))
+    db_session.add(Submission(user_id=user.id, problem_revision_id=problem.id, code="x", status=SubmissionStatus.DONE, verdict=Verdict.ACCEPTED, score=100.0))
     db_session.commit()
 
     assert is_item_unlocked(db_session, user.id, locked_item, items_by_id) is True

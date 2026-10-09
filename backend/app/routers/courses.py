@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.deps import get_current_user, require_role
-from app.models import Course, CourseStatus, Enrollment, LearningItem, User
+from app.models import Course, CourseStatus, Enrollment, EnrollmentStatus, LearningItem, User
 from app.schemas import (
     CourseArchiveIn,
     CourseCreate,
@@ -170,8 +170,8 @@ def get_tree(course_id: int, db: Session = Depends(get_db), user: User = Depends
         raise HTTPException(status_code=404, detail="Курс не найден")
 
     if user.role == "student":
-        # STU-002/STU-003: ученик видит только опубликованную версию, прогресс
-        # считается по ней и не может поменяться из-за правок черновика.
+        # Students follow the currently published course tree so newly
+        # published tasks appear without requiring a new enrollment.
         if not course.active_version_id:
             raise HTTPException(status_code=404, detail="Курс ещё не опубликован")
         version_id = course.active_version_id
@@ -204,11 +204,41 @@ def set_last_position(
         raise HTTPException(status_code=404, detail="Вы не записаны на этот курс")
 
     item = db.query(LearningItem).filter(LearningItem.id == payload.item_id).first()
-    if not item or item.course_version_id != enrollment.course_version_id:
+    course = db.query(Course).filter(Course.id == course_id).first()
+    version_id = course.active_version_id if course and course.active_version_id else enrollment.course_version_id
+    if not item or item.course_version_id != version_id:
         raise HTTPException(status_code=422, detail="Элемент не относится к назначенной версии курса")
 
     enrollment.last_item_id = payload.item_id
     db.commit()
+    return {"ok": True}
+
+
+@router.put("/{course_id}/items/{item_id}/complete")
+def complete_content_item(
+    course_id: int,
+    item_id: int,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """Marks a lecture complete when the student explicitly moves forward."""
+    enrollment = (
+        db.query(Enrollment)
+        .filter(
+            Enrollment.user_id == user.id,
+            Enrollment.course_id == course_id,
+            Enrollment.status == EnrollmentStatus.ACTIVE,
+        )
+        .first()
+    )
+    if not enrollment:
+        raise HTTPException(status_code=404, detail="Вы не записаны на этот курс")
+    course = db.query(Course).filter(Course.id == course_id).first()
+    item = db.query(LearningItem).filter(LearningItem.id == item_id).first()
+    version_id = course.active_version_id if course and course.active_version_id else enrollment.course_version_id
+    if not item or item.course_version_id != version_id:
+        raise HTTPException(status_code=422, detail="Элемент не относится к назначенной версии курса")
+    course_admin.mark_content_item_completed(db, user.id, item)
     return {"ok": True}
 
 

@@ -8,13 +8,25 @@
   border-radius: 8px;
 }
 
+/* Lecture text and code should not be selectable/copied from the student view. */
+.lecture-content,
+.lecture-content * {
+  -webkit-user-select: none;
+  user-select: none;
+}
+
 .preview pre {
-  /* Блоки кода нарочно остаются на фиксированной тёмной теме hljs
-   * (github-dark) независимо от режима приложения — см. main.tsx. */
   background: #0d1117;
+  color: #c9d1d9;
+  border: 0;
   padding: 12px;
   border-radius: 8px;
   overflow-x: auto;
+}
+
+.preview pre code {
+  color: inherit;
+  background: transparent;
 }
 
 .preview :not(pre) > code {
