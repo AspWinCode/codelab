@@ -217,33 +217,62 @@ const TURTLE_URL = 'https://turtle.tirskix.space';
  * редактора, см. turtle.tirskix.space). Общий для snap_task, gdevelop_task и
  * turtle_task — все устроены одинаково, различаются только адресом редактора
  * и подписями. */
+const DEFAULT_PANE_PERCENT = 42;
+const MIN_PANE_PERCENT = 15;
+const MAX_PANE_PERCENT = 85;
+
 function StepIframeTaskView({ item, iframeUrl, iframeTitle, expandLabel }: {
   item: LearningItemTree; iframeUrl: string; iframeTitle: string; expandLabel: string;
 }) {
   const steps = item.steps || [];
   const [stepIndex, setStepIndex] = useState(0);
   const [expanded, setExpanded] = useState(false);
+  // Ширина левой панели (инструкция) в процентах — ученик тянет разделитель,
+  // чтобы расширить редактор (Snap!/GDevelop/Черепашка) вправо или влево за
+  // пределы исходных 42%. На мобильной раскладке (xs, панели друг под
+  // другом) ширина не применяется — там работает брейкпоинт из sx.
+  const [panePercent, setPanePercent] = useState(DEFAULT_PANE_PERCENT);
+  const [isDragging, setIsDragging] = useState(false);
+  const containerRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => { setStepIndex(0); }, [item.id]);
+
+  useEffect(() => {
+    if (!isDragging) return;
+    const onMove = (e: MouseEvent) => {
+      if (!containerRef.current) return;
+      const rect = containerRef.current.getBoundingClientRect();
+      const percent = ((e.clientX - rect.left) / rect.width) * 100;
+      setPanePercent(Math.min(MAX_PANE_PERCENT, Math.max(MIN_PANE_PERCENT, percent)));
+    };
+    const onUp = () => setIsDragging(false);
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+    return () => {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+    };
+  }, [isDragging]);
 
   const step = steps[stepIndex];
 
   return (
-    <Box sx={{ display: 'flex', height: 'calc(100vh - 64px)', width: '100%' }}>
+    <Box ref={containerRef} sx={{ display: 'flex', height: 'calc(100vh - 64px)', width: '100%' }}>
       <Box
         sx={{
           // Без брейкпоинта sm инструкция растягивалась на 100% ширины уже
           // при <900px (MUI берёт xs-значение, пока не встретит явный
           // sm/md) — редактор/панель Skulpt справа сжималась в 0 (совсем
           // не видна) на любом окне уже, чем "десктоп" в привычном смысле.
-          width: expanded ? 0 : { xs: '100%', sm: '50%', md: '42%' },
-          minWidth: expanded ? 0 : { sm: 260, md: 340 },
+          width: expanded ? 0 : { xs: '100%', sm: `${panePercent}%` },
+          minWidth: expanded ? 0 : { sm: 0 },
           overflow: 'hidden',
-          transition: 'width 0.2s ease',
+          transition: isDragging ? 'none' : 'width 0.2s ease',
           borderRight: expanded ? 'none' : '1px solid',
           borderColor: 'divider',
           display: 'flex',
           flexDirection: 'column',
+          flexShrink: 0,
         }}
       >
         <Box sx={{ p: 3, flex: 1, overflowY: 'auto' }}>
@@ -263,7 +292,21 @@ function StepIframeTaskView({ item, iframeUrl, iframeTitle, expandLabel }: {
         )}
       </Box>
 
-      <Box sx={{ flex: 1, minWidth: 200, display: 'flex', flexDirection: 'column' }}>
+      {!expanded && (
+        <Box
+          onMouseDown={() => setIsDragging(true)}
+          sx={{
+            display: { xs: 'none', sm: 'block' },
+            width: 6,
+            flexShrink: 0,
+            cursor: 'col-resize',
+            bgcolor: isDragging ? 'primary.main' : 'divider',
+            '&:hover': { bgcolor: 'primary.main' },
+          }}
+        />
+      )}
+
+      <Box sx={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' }}>
         <Stack direction="row" justifyContent="flex-end" sx={{ px: 1.5, py: 1, borderBottom: '1px solid', borderColor: 'divider' }}>
           <Button
             size="small"
@@ -273,12 +316,15 @@ function StepIframeTaskView({ item, iframeUrl, iframeTitle, expandLabel }: {
             {expanded ? 'Показать инструкцию' : expandLabel}
           </Button>
         </Stack>
-        <Box sx={{ flex: 1 }}>
+        <Box sx={{ flex: 1, position: 'relative' }}>
           <iframe
             src={iframeUrl}
             title={iframeTitle}
             style={{ width: '100%', height: '100%', border: 'none', display: 'block' }}
           />
+          {isDragging && (
+            <Box sx={{ position: 'absolute', inset: 0, cursor: 'col-resize' }} />
+          )}
         </Box>
       </Box>
     </Box>
