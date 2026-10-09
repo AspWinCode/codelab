@@ -5,6 +5,7 @@
 Не путать с course_admin.py::list_course_submissions/apply_manual_grade —
 это для type=task (код на автопроверку по ProblemRevision), у проекта своя
 модель (ProjectSubmission/ProjectFile/ProjectFileComment, см. models.py)."""
+import logging
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -33,8 +34,11 @@ from app.schemas import (
     ProjectSubmissionOut,
     ProjectSubmissionReviewOut,
 )
+from app.services.lms_client import notify_project_submission_webhook
 from app.services.notifications import notify
 from app.services.project_files import delete_project_file, project_file_path, save_project_file
+
+logger = logging.getLogger(__name__)
 
 
 def get_project_item_or_404(db: Session, item_id: int) -> LearningItem:
@@ -254,7 +258,7 @@ def remove_own_file(db: Session, file_id: int, user_id: int) -> None:
     db.commit()
 
 
-def submit_submission(db: Session, submission_id: int, user_id: int) -> ProjectSubmission:
+async def submit_submission(db: Session, submission_id: int, user_id: int) -> ProjectSubmission:
     submission = db.query(ProjectSubmission).filter(ProjectSubmission.id == submission_id).first()
     if not submission or submission.user_id != user_id:
         raise HTTPException(status_code=404, detail="Сдача не найдена")
@@ -266,6 +270,31 @@ def submit_submission(db: Session, submission_id: int, user_id: int) -> ProjectS
     submission.submitted_at = datetime.now(timezone.utc)
     db.commit()
     db.refresh(submission)
+
+    try:
+        item = db.query(LearningItem).filter(LearningItem.id == submission.learning_item_id).first()
+        course = get_course_for_project_item(db, item) if item else None
+        student = db.query(User).filter(User.id == submission.user_id).first()
+        if course and student:
+            # attempt_number > 1 возможен только через needs_revision -> новая
+            # попытка (см. get_attachable_submission) — значит это пересдача,
+            # сколько бы раз до этого ни возвращали на доработку.
+            event = "project_submitted" if submission.attempt_number == 1 else "project_resubmitted"
+            await notify_project_submission_webhook(
+                event=event,
+                submission_id=submission.id,
+                course_id=course.id,
+                item_id=submission.learning_item_id,
+                attempt_number=submission.attempt_number,
+                submitted_at=submission.submitted_at,
+                student_external_ref=student.external_ref,
+            )
+    except Exception:
+        # Best-effort (см. README): ученик должен увидеть свою работу
+        # отправленной независимо от того, что происходит с уведомлением
+        # тренера — сбой вебхука не должен откатывать уже сохранённую сдачу.
+        logger.exception("Не удалось отправить вебхук сдачи проекта %s в LMS", submission.id)
+
     return submission
 
 

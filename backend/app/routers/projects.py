@@ -44,8 +44,8 @@ def delete_file(file_id: int, db: Session = Depends(get_db), user: User = Depend
 
 
 @router.post("/submissions/{submission_id}/submit", response_model=ProjectSubmissionOut)
-def submit(submission_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
-    submission = project_admin.submit_submission(db, submission_id, user.id)
+async def submit(submission_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    submission = await project_admin.submit_submission(db, submission_id, user.id)
     item = project_admin.get_project_item_or_404(db, submission.learning_item_id)
     return project_admin.to_submission_out(db, item, submission)
 

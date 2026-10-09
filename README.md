@@ -212,7 +212,21 @@ Web app (React) → API gateway/Backend (FastAPI) → LMS service
 | портал → codelab | `GET /api/internal/lms-progress/{external_ref}` | сервер портала | отдать прогресс ученика (баллы, курсы, посылки) |
 | портал → codelab | `POST /api/admin/courses/{id}/enroll` | сервер портала | зачислить ученика при выдаче доступа в портале |
 | портал → codelab | `DELETE /api/admin/courses/{id}/enroll/{external_ref}` | сервер портала | отозвать зачисление |
-| codelab → портал | `POST {LMS_BASE}/api/v1/codelab/courses/webhook` | при публикации/снятии курса | обновить пункт витрины курсов в портале |
+| codelab → портал | `POST {LMS_BASE}/api/v1/codelab/courses/webhook` | при публикации/снятии курса (`event: "published"`/`"unpublished"`), при сдаче/пересдаче проекта (`event: "project_submitted"`/`"project_resubmitted"`) | обновить пункт витрины курсов; уведомить тренера о новой работе на проверку |
+
+Сдача/пересдача проекта (`app/services/project_admin.py::submit_submission`,
+`app/services/lms_client.py::notify_project_submission_webhook`) — тот же
+эндпоинт и механизм подписи, что у publish/unpublish, только тело несёт
+`submission: {id, course_id, item_id, attempt_number, submitted_at,
+student_external_ref}`; `student_external_ref` — тот же формат `lp-...`,
+что уже отдаётся в `GET .../submissions`/`GET .../projects/{id}/submissions`.
+`event` различает первую сдачу (`attempt_number == 1` → `project_submitted`)
+и пересдачу после `needs_revision` (`attempt_number > 1` →
+`project_resubmitted`) — заводить новую попытку умеет только этот переход
+(см. `get_attachable_submission`), поэтому отдельно хранить "это пересдача"
+не нужно. Доставка best-effort (как и у publish/unpublish): сбой вебхука
+логируется и не откатывает уже сохранённую сдачу — тренер всё равно увидит
+её в очереди при следующем открытии раздела.
 
 Все запросы между системами подписываются общим секретом `SSO_KODEX_SHARED_SECRET`
 (HMAC-SHA256, заголовок `X-LP-Signature`) — тем же, что уже настроен у портала для
