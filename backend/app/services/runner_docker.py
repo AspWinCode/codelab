@@ -57,6 +57,13 @@ OUTPUT_KILL_THRESHOLD = 200_000
 _READ_CHUNK_SIZE = 65_536
 _POLL_INTERVAL_SECONDS = 0.05
 
+# Ограничивает число одновременно запущенных контейнеров-песочниц этим
+# процессом (settings.runner_max_concurrent) — хост общий с другими
+# проектами, а без лимита backend запускает по контейнеру на каждый
+# одновременный запрос "Запустить" (см. комментарий у настройки). Выше
+# лимита запросы просто ждут свободного слота, не падая.
+_CONCURRENCY_GATE = threading.Semaphore(settings.runner_max_concurrent)
+
 
 def _build_docker_args(
     container_name: str,
@@ -139,50 +146,54 @@ def run_sandboxed(
 
         args = _build_docker_args(container_name, environment, str(code_path), memory_limit_mb, extra_mounts)
 
-        try:
-            proc = subprocess.Popen(
-                args,
-                stdin=subprocess.PIPE,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-            )
-        except FileNotFoundError:
-            raise RuntimeError(
-                "Docker не найден на этом узле. RUNNER_BACKEND=docker требует установленный "
-                "Docker Engine/Desktop — либо поставьте Docker, либо (только для локальной "
-                "разработки без чужого кода) переключитесь на RUNNER_BACKEND=subprocess."
-            )
+        # Ждём свободный слот ДО запуска контейнера — семафор ограничивает
+        # именно число одновременно работающих контейнеров, а не ждущих
+        # своей очереди запросов (тех может быть сколько угодно).
+        with _CONCURRENCY_GATE:
+            try:
+                proc = subprocess.Popen(
+                    args,
+                    stdin=subprocess.PIPE,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                )
+            except FileNotFoundError:
+                raise RuntimeError(
+                    "Docker не найден на этом узле. RUNNER_BACKEND=docker требует установленный "
+                    "Docker Engine/Desktop — либо поставьте Docker, либо (только для локальной "
+                    "разработки без чужого кода) переключитесь на RUNNER_BACKEND=subprocess."
+                )
 
-        try:
-            proc.stdin.write(stdin)
-            proc.stdin.close()
-        except BrokenPipeError:
-            pass  # решение не читает stdin (или уже упало) — не наша проблема здесь
+            try:
+                proc.stdin.write(stdin)
+                proc.stdin.close()
+            except BrokenPipeError:
+                pass  # решение не читает stdin (или уже упало) — не наша проблема здесь
 
-        exceeded = threading.Event()
-        result: dict = {}
-        readers = [
-            threading.Thread(target=_read_capped, args=(proc.stdout, OUTPUT_DISPLAY_LIMIT, OUTPUT_KILL_THRESHOLD, exceeded, result, "stdout")),
-            threading.Thread(target=_read_capped, args=(proc.stderr, OUTPUT_DISPLAY_LIMIT, OUTPUT_KILL_THRESHOLD, exceeded, result, "stderr")),
-        ]
-        for t in readers:
-            t.start()
+            exceeded = threading.Event()
+            result: dict = {}
+            readers = [
+                threading.Thread(target=_read_capped, args=(proc.stdout, OUTPUT_DISPLAY_LIMIT, OUTPUT_KILL_THRESHOLD, exceeded, result, "stdout")),
+                threading.Thread(target=_read_capped, args=(proc.stderr, OUTPUT_DISPLAY_LIMIT, OUTPUT_KILL_THRESHOLD, exceeded, result, "stderr")),
+            ]
+            for t in readers:
+                t.start()
 
-        deadline = time.monotonic() + (time_limit_ms / 1000) + STARTUP_GRACE_SECONDS
-        timed_out = False
-        while proc.poll() is None:
-            if exceeded.is_set() or time.monotonic() >= deadline:
-                timed_out = not exceeded.is_set()
-                # `docker run` (клиент) продолжит жить, если не остановить контейнер
-                # явно по имени (JDG-011) — убийство самого клиентского процесса не
-                # останавливает контейнер.
-                subprocess.run(["docker", "kill", container_name], capture_output=True, timeout=10)
-                break
-            time.sleep(_POLL_INTERVAL_SECONDS)
+            deadline = time.monotonic() + (time_limit_ms / 1000) + STARTUP_GRACE_SECONDS
+            timed_out = False
+            while proc.poll() is None:
+                if exceeded.is_set() or time.monotonic() >= deadline:
+                    timed_out = not exceeded.is_set()
+                    # `docker run` (клиент) продолжит жить, если не остановить контейнер
+                    # явно по имени (JDG-011) — убийство самого клиентского процесса не
+                    # останавливает контейнер.
+                    subprocess.run(["docker", "kill", container_name], capture_output=True, timeout=10)
+                    break
+                time.sleep(_POLL_INTERVAL_SECONDS)
 
-        for t in readers:
-            t.join(timeout=10)
-        proc.wait(timeout=10)
+            for t in readers:
+                t.join(timeout=10)
+            proc.wait(timeout=10)
 
         return RunResult(stdout=result.get("stdout", ""), stderr=result.get("stderr", ""), timed_out=timed_out)
