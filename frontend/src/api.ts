@@ -20,6 +20,7 @@ export interface Me {
   role: string;
   groups: string[];
   directions: string[];
+  return_to_url: string | null;
 }
 
 export interface Course {

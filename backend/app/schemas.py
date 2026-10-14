@@ -376,6 +376,7 @@ class MeOut(BaseModel):
     role: str
     groups: List[str]
     directions: List[str]
+    return_to_url: Optional[str] = None
 
     model_config = ConfigDict(from_attributes=True)
 

@@ -41,6 +41,13 @@ def sso_login(response: Response, token: str = Query(...), course: int | None = 
         user.groups = payload.get("groups", user.groups)
         user.directions = payload.get("directions", user.directions)
 
+    # Кнопка "Назад в кабинет" в Layout — destination приходит только из
+    # подписанного токена портала, никогда из query/браузера (защита от
+    # open redirect). Обновляем при каждом SSO-входе, а не только при
+    # создании учётки, чтобы оставаться в курсе актуального адреса портала.
+    if "return_to" in payload:
+        user.return_to_url = payload.get("return_to")
+
     if user.is_blocked:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Аккаунт заблокирован")
 

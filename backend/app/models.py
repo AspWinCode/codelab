@@ -107,6 +107,12 @@ class User(Base):
     groups = Column(JSON, nullable=False, default=list)
     directions = Column(JSON, nullable=False, default=list)
     is_blocked = Column(Boolean, nullable=False, default=False)
+    # Куда вести кнопку "Назад в кабинет" (LMS Student Portal) — приходит в
+    # подписанном SSO-токене портала (claim "return_to", см. kodex_sso.py в
+    # learning-portal-main) и обновляется при каждом SSO-входе, чтобы
+    # оставаться валидным даже после истечения текущей сессии Codelab
+    # (ссылка не требует активной аутентификации, это обычная навигация).
+    return_to_url = Column(String(512), nullable=True)
     # IAM-004: "завершить активные сессии" — раз сессия это подписанный JWT без
     # состояния на сервере, отозвать конкретный токен нельзя; вместо этого
     # любой токен, выданный ДО этой отметки, считается недействительным
