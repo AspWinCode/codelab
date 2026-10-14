@@ -3,7 +3,7 @@ import {
   Alert, Box, Button, Checkbox, Chip, Container, Divider, Drawer, FormControlLabel,
   FormGroup, List, ListItem, ListItemButton, ListItemIcon, ListItemText, Paper, Stack, TextField, Typography,
 } from '@mui/material';
-import { useEffect, useRef, useState } from 'react';
+import { SyntheticEvent, useEffect, useRef, useState } from 'react';
 import { useParams, useSearchParams } from 'react-router-dom';
 import { api, LearningItemTree, ProblemForStudent, ProjectSubmission, QuizAttempt, RunResult, Submission } from '../api';
 import Layout from '../components/Layout';
@@ -31,6 +31,54 @@ const PROJECT_STATUS_COLOR: Record<string, 'default' | 'info' | 'warning' | 'suc
 
 function formatDateTime(iso: string): string {
   return new Date(iso).toLocaleString('ru-RU');
+}
+
+const RESULT_PRE_SX = {
+  fontFamily: FONT_CODE, fontSize: '0.8125rem', bgcolor: 'background.paper',
+  border: '1px solid', borderColor: 'divider', borderRadius: 2, p: 1.5, whiteSpace: 'pre-wrap' as const,
+};
+
+// Условие задачи нельзя выделить/скопировать обычным способом (ПКМ,
+// Ctrl+C) — методист просил не давать ученикам вставлять условие в
+// сторонние инструменты (п.14.10.2026). Это лёгкий сдерживающий барьер, не
+// защита: тот, кто откроет DevTools или посмотрит исходный код страницы,
+// текст всё равно получит — целенаправленно не усложняем этим IDE-редактор
+// кода и поле stdin, их копировать можно как обычно.
+const NO_COPY_SX = {
+  userSelect: 'none' as const,
+  WebkitUserSelect: 'none' as const,
+};
+function blockCopy(e: SyntheticEvent) {
+  e.preventDefault();
+}
+
+/** Вывод ученика/требуемый вывод с одного и того же первого несовпавшего
+ * теста + сырая трассировка + готовое объяснение ошибки на русском (не
+ * заменяет трассировку, а дополняет, см. backend/app/services/error_explain.py).
+ * Ничего не рендерит, если посылке нечего показать (например, Accepted). */
+function SubmissionResultDetails({ s }: { s: Submission }) {
+  const hasDiff = s.actual_output != null || s.expected_output != null;
+  if (!hasDiff && !s.stderr && !s.error_explanation) return null;
+  return (
+    <Box sx={{ mt: 1 }}>
+      {hasDiff && (
+        <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1.5} sx={{ mb: 1.5 }}>
+          <Box sx={{ flex: 1 }}>
+            <Typography variant="caption" color="text.secondary">Ваш вывод</Typography>
+            <Box component="pre" sx={RESULT_PRE_SX}>{s.actual_output ?? s.stdout}</Box>
+          </Box>
+          <Box sx={{ flex: 1 }}>
+            <Typography variant="caption" color="text.secondary">Должно быть</Typography>
+            <Box component="pre" sx={RESULT_PRE_SX}>{s.expected_output}</Box>
+          </Box>
+        </Stack>
+      )}
+      {s.stderr && (
+        <Box component="pre" sx={{ ...RESULT_PRE_SX, mb: s.error_explanation ? 1 : 0 }}>{s.stderr}</Box>
+      )}
+      {s.error_explanation && <Alert severity="info">{s.error_explanation}</Alert>}
+    </Box>
+  );
 }
 
 /** Ученик прикрепляет файлы к проекту (произвольный код и т.п.), отправляет
@@ -713,7 +761,7 @@ export default function CoursePage() {
                 <Typography variant="h2" sx={{ mb: 2 }}>{selected.title}</Typography>
 
                 {problem && (
-                  <Box sx={{ mb: 2.5 }}>
+                  <Box sx={{ mb: 2.5, ...NO_COPY_SX }} onCopy={blockCopy} onContextMenu={blockCopy}>
                     <Box className="preview" dangerouslySetInnerHTML={{ __html: renderContentHtml(problem.statement) }} />
                     {(problem.input_format || problem.output_format) && (
                       <Stack direction="row" spacing={3} sx={{ mt: 1.5 }}>
@@ -768,23 +816,26 @@ export default function CoursePage() {
                 </Stack>
 
                 {runResult && (
-                  <Box component="pre" sx={{
-                    fontFamily: FONT_CODE, fontSize: '0.8125rem', bgcolor: 'background.paper',
-                    border: '1px solid', borderColor: 'divider', borderRadius: 2, p: 1.5, whiteSpace: 'pre-wrap', mb: 2,
-                  }}>
-                    stdout: {runResult.stdout}
-                    {'\n'}stderr: {runResult.stderr}
-                    {runResult.timed_out ? '\n(превышено время выполнения)' : ''}
+                  <Box sx={{ mb: 2 }}>
+                    <Box component="pre" sx={{ ...RESULT_PRE_SX, mb: runResult.error_explanation ? 1 : 0 }}>
+                      stdout: {runResult.stdout}
+                      {'\n'}stderr: {runResult.stderr}
+                      {runResult.timed_out ? '\n(превышено время выполнения)' : ''}
+                    </Box>
+                    {runResult.error_explanation && <Alert severity="info">{runResult.error_explanation}</Alert>}
                   </Box>
                 )}
 
                 {submission && (
-                  <Stack direction="row" spacing={1.5} alignItems="center" sx={{ mb: 2 }}>
-                    <Typography variant="body2" color="text.secondary">Статус: {submission.status}</Typography>
-                    {!TERMINAL_STATUSES.has(submission.status)
-                      ? <Chip size="small" label="проверяется…" />
-                      : <VerdictChip verdict={submission.verdict} score={submission.score} />}
-                  </Stack>
+                  <Box sx={{ mb: 2 }}>
+                    <Stack direction="row" spacing={1.5} alignItems="center">
+                      <Typography variant="body2" color="text.secondary">Статус: {submission.status}</Typography>
+                      {!TERMINAL_STATUSES.has(submission.status)
+                        ? <Chip size="small" label="проверяется…" />
+                        : <VerdictChip verdict={submission.verdict} score={submission.score} />}
+                    </Stack>
+                    {TERMINAL_STATUSES.has(submission.status) && <SubmissionResultDetails s={submission} />}
+                  </Box>
                 )}
 
                 {history.length > 0 && (
@@ -805,6 +856,7 @@ export default function CoursePage() {
                               <Typography variant="body2" color="text.secondary">Комментарий: {s.manual_comment}</Typography>
                             </>
                           )}
+                          <SubmissionResultDetails s={s} />
                         </Box>
                       ))}
                     </Stack>

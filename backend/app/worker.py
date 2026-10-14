@@ -56,11 +56,14 @@ def _process_submission(db: Session, submission: Submission) -> None:
     last_error: Exception | None = None
     for attempt in range(1, MAX_TECHNICAL_RETRIES + 2):
         try:
-            verdict, score, stdout, stderr = judge_submission(problem, submission.code)
-            submission.verdict = verdict
-            submission.score = score
-            submission.stdout = stdout
-            submission.stderr = stderr
+            result = judge_submission(problem, submission.code)
+            submission.verdict = result.verdict
+            submission.score = result.score
+            submission.stdout = result.stdout
+            submission.stderr = result.stderr
+            submission.actual_output = result.actual_output
+            submission.expected_output = result.expected_output
+            submission.error_explanation = result.error_explanation
             submission.status = SubmissionStatus.DONE
             db.commit()
             recompute_progress_for_submission(db, submission)  # GRD-005

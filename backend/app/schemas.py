@@ -330,6 +330,12 @@ class SubmissionOut(BaseModel):
     score: Optional[float]
     stdout: Optional[str]
     stderr: Optional[str]
+    # Вывод студента и требуемый вывод с одного и того же первого
+    # несовпавшего теста (см. комментарий у Submission.actual_output в
+    # models.py) + готовое объяснение ошибки на русском — None при ACCEPTED.
+    actual_output: Optional[str] = None
+    expected_output: Optional[str] = None
+    error_explanation: Optional[str] = None
     # GRD-004: ручная корректировка хранится отдельно от исходного авто-результата выше.
     manual_score_override: Optional[float] = None
     manual_comment: Optional[str] = None
@@ -367,6 +373,10 @@ class RunResult(BaseModel):
     stdout: str
     stderr: str
     timed_out: bool
+    # Готовое объяснение на русском по типу исключения — дополняет stderr,
+    # не заменяет его (см. app/services/error_explain.py). None, если ошибки
+    # нет или её тип не распознан.
+    error_explanation: Optional[str] = None
 
 
 class MeOut(BaseModel):

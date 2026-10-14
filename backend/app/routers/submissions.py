@@ -7,6 +7,7 @@ from app.database import get_db
 from app.deps import get_current_user, require_role
 from app.models import Draft, ProblemRevision, Submission, SubmissionStatus, User
 from app.schemas import ManualGradeIn, RunRequest, RunResult, SubmissionCreate, SubmissionOut
+from app.services.error_explain import explain_stderr_ru, explain_timeout_ru
 from app.services.progress_calc import apply_manual_grade
 from app.services.runner import run_for_problem
 
@@ -44,7 +45,9 @@ def run_code(payload: RunRequest, db: Session = Depends(get_db), user: User = De
     # запросы (см. инцидент с 504 13.10.2026: QueuePool limit reached).
     db.close()
 
-    return run_for_problem(problem, payload.code, payload.stdin)
+    result = run_for_problem(problem, payload.code, payload.stdin)
+    result.error_explanation = explain_timeout_ru() if result.timed_out else explain_stderr_ru(result.stderr)
+    return result
 
 
 @router.post("", response_model=SubmissionOut)

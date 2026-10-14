@@ -347,6 +347,18 @@ class Submission(Base):
     score = Column(Float, nullable=True)
     stdout = Column(Text, nullable=True)
     stderr = Column(Text, nullable=True)
+    # Вывод, который реально дал код ученика, и вывод, который требовался —
+    # оба с ОДНОГО И ТОГО ЖЕ первого несовпавшего теста (а не последнего
+    # прогнанного — judge.py продолжает все тесты ради частичного балла,
+    # так что stdout/stderr выше могут быть уже от другого, более позднего
+    # теста). Пусто при ACCEPTED. См. запрос методиста 14.10.2026 — ученику
+    # показываем результат сравнения, а не эталонный код решения.
+    actual_output = Column(Text, nullable=True)
+    expected_output = Column(Text, nullable=True)
+    # Готовое объяснение на русском по типу исключения (EOFError, IndexError
+    # и т.п.) из stderr — без ИИ, по словарю в app/services/error_explain.py;
+    # дополняет трассировку в интерфейсе, не заменяет её.
+    error_explanation = Column(Text, nullable=True)
     manual_score_override = Column(Float, nullable=True)  # GRD-004: хранится отдельно от авто-результата
     manual_comment = Column(Text, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())

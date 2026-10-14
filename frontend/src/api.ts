@@ -35,6 +35,7 @@ export interface RunResult {
   stdout: string;
   stderr: string;
   timed_out: boolean;
+  error_explanation: string | null;
 }
 
 // JDG-001: посылка проходит статусы created → queued → running → done
@@ -46,6 +47,11 @@ export interface Submission {
   score: number | null;
   stdout: string | null;
   stderr: string | null;
+  // Вывод ученика и требуемый вывод с одного и того же первого несовпавшего
+  // теста — null при ACCEPTED (см. backend/app/models.py: Submission).
+  actual_output: string | null;
+  expected_output: string | null;
+  error_explanation: string | null;
   manual_score_override: number | null;
   manual_comment: string | null;
   created_at: string;
