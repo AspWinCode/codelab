@@ -30,6 +30,13 @@ def run_code(payload: RunRequest, db: Session = Depends(get_db), user: User = De
         db.add(Draft(user_id=user.id, problem_revision_id=problem.id, code=payload.code))
     db.commit()
 
+    # db.commit() инвалидирует закэшированные атрибуты ORM-объектов
+    # (SQLAlchemy expire_on_commit=True по умолчанию) — обращаемся к полям,
+    # которые нужны run_for_problem, пока сессия ещё жива, чтобы они
+    # перезагрузились и закэшировались в объекте; иначе обращение к ним
+    # после db.close() ниже упадёт DetachedInstanceError.
+    _ = (problem.language, problem.time_limit_ms, problem.memory_limit_mb, problem.sql_fixture)
+
     # Не держим соединение с БД на время docker-прогона (секунды — запуск
     # контейнера судьи) — иначе при одновременной нагрузке (много учеников
     # жмут "Запустить" разом) пул соединений исчерпывается быстрее, чем
