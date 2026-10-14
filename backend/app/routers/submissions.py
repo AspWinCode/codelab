@@ -30,6 +30,13 @@ def run_code(payload: RunRequest, db: Session = Depends(get_db), user: User = De
         db.add(Draft(user_id=user.id, problem_revision_id=problem.id, code=payload.code))
     db.commit()
 
+    # Не держим соединение с БД на время docker-прогона (секунды — запуск
+    # контейнера судьи) — иначе при одновременной нагрузке (много учеников
+    # жмут "Запустить" разом) пул соединений исчерпывается быстрее, чем
+    # освобождается, и валит таймаутами даже не связанные с запуском
+    # запросы (см. инцидент с 504 13.10.2026: QueuePool limit reached).
+    db.close()
+
     return run_for_problem(problem, payload.code, payload.stdin)
 
 
