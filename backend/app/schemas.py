@@ -78,6 +78,12 @@ class ProblemRevisionStudentOut(BaseModel):
     # IDE-002: последний код ученика по ЭТОЙ задаче — фронт подставляет его в
     # редактор при открытии, а не то, что осталось в редакторе от предыдущей.
     draft_code: Optional[str]
+    # Момент последнего серверного сохранения черновика — фронт сравнивает
+    # его со своей локальной резервной копией (localStorage) при открытии
+    # задачи, чтобы не перезатереть более свежие несохранённые правки уже
+    # устаревшим ответом сервера и не подставить стартовый шаблон поверх
+    # существующего черновика.
+    draft_updated_at: Optional[datetime] = None
 
 
 class CourseCreate(BaseModel):
@@ -367,6 +373,18 @@ class RunRequest(BaseModel):
     problem_revision_id: int
     code: str
     stdin: str = ""
+
+
+class DraftIn(BaseModel):
+    """IDE-002: автосохранение кода без прогона/отправки — фронт шлёт это с
+    debounce по мере набора, а не только попутно с "Запустить"/"Отправить"."""
+
+    problem_revision_id: int
+    code: str
+
+
+class DraftOut(BaseModel):
+    updated_at: datetime
 
 
 class RunResult(BaseModel):

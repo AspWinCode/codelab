@@ -374,6 +374,46 @@ def test_resubmission_after_needs_revision_fires_project_resubmitted_webhook(cli
     assert resubmit_call["student_external_ref"] == "lp-student-10"
 
 
+def test_accepted_project_marks_tree_item_completed_and_updates_progress(client, db_session):
+    """Регресс: раньше PROJECT вообще не учитывался в
+    is_item_passed/_recompute_course_progress — зелёная отметка в дереве
+    курса для принятого тренером проекта никогда не загоралась, и он не
+    попадал в Progress.completed_items, даже если был единственным
+    обязательным элементом курса."""
+    from app.models import Progress
+
+    course, version, item = _make_published_project(db_session)
+    student = make_user(db_session, "student", "lp-student-12")
+    _enroll(db_session, student, course, version)
+    as_user(client, student)
+
+    sub_id = client.get(f"/api/projects/items/{item.id}/submission").json()["id"]
+    client.post(f"/api/projects/items/{item.id}/files", files={"file": ("a.py", io.BytesIO(b"1"), "text/x-python")})
+    client.post(f"/api/projects/submissions/{sub_id}/submit")
+
+    def tree_item():
+        tree = client.get(f"/api/courses/{course.id}/tree").json()
+        return next(n for n in tree if n["id"] == item.id)
+
+    # Отправлено, но ещё не проверено — не должно считаться пройденным
+    # (простая отправка не равна прохождению).
+    assert tree_item()["completed"] is False
+
+    accepted = client.put(
+        f"/api/lms-admin/projects/submissions/{sub_id}/review?{_staff_qs()}",
+        json={"decision": "accepted", "score": 90, "comment": "Хорошая работа"},
+        headers=_staff_headers(),
+    )
+    assert accepted.status_code == 200
+
+    assert tree_item()["completed"] is True
+
+    progress = db_session.query(Progress).filter(Progress.user_id == student.id, Progress.course_id == course.id).first()
+    assert progress is not None
+    assert progress.completed_items == 1
+    assert progress.percent == 100.0
+
+
 def test_webhook_failure_does_not_break_submit(client, db_session, monkeypatch):
     """Best-effort доставка (см. README/запрос): отказ вебхука (любого рода,
     не только HTTP-ошибка) не должен ломать сам сценарий сдачи — ученик

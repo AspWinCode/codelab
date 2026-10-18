@@ -10,15 +10,19 @@ from app.models import (
     LearningItem,
     LearningItemType,
     ProblemRevision,
+    ProjectSubmission,
+    ProjectSubmissionStatus,
     Progress,
     Submission,
     SubmissionStatus,
     User,
     Verdict,
 )
+from app.services.course_admin import build_student_tree, mark_content_item_completed
 from app.services.progress_calc import (
     is_item_passed,
     is_item_unlocked,
+    recompute_progress_for_project,
     recompute_progress_for_submission,
     resolve_official_score,
 )
@@ -181,3 +185,136 @@ def test_item_unlocks_after_predecessor_passed(db_session):
     db_session.commit()
 
     assert is_item_unlocked(db_session, user.id, locked_item, items_by_id) is True
+
+
+def _make_course_with_project(db, weight=1.0, required=True):
+    course = Course(title="C")
+    db.add(course)
+    db.flush()
+    version = CourseVersion(course_id=course.id, version_number=1)
+    db.add(version)
+    db.flush()
+    item = LearningItem(
+        course_version_id=version.id, type=LearningItemType.PROJECT, title="Проект",
+        weight=weight, is_required=required,
+    )
+    db.add(item)
+    db.flush()
+    return course, version, item
+
+
+def test_project_passed_only_when_accepted(db_session):
+    """Регресс: PROJECT раньше нигде не был учтён в is_item_passed — проект
+    никогда не считался пройденным, какой бы статус у сдачи ни был."""
+    course, version, item = _make_course_with_project(db_session)
+    user = User(external_ref="lp-1", full_name="U", role="student")
+    db_session.add(user)
+    db_session.flush()
+
+    submitted = ProjectSubmission(
+        learning_item_id=item.id, user_id=user.id, attempt_number=1,
+        status=ProjectSubmissionStatus.SUBMITTED,
+    )
+    db_session.add(submitted)
+    db_session.commit()
+    assert is_item_passed(db_session, user.id, item) is False
+
+    submitted.status = ProjectSubmissionStatus.NEEDS_REVISION
+    db_session.commit()
+    assert is_item_passed(db_session, user.id, item) is False
+
+    submitted.status = ProjectSubmissionStatus.ACCEPTED
+    submitted.score = 85.0
+    db_session.commit()
+    assert is_item_passed(db_session, user.id, item) is True
+
+
+def test_recompute_progress_after_project_accepted(db_session):
+    course, version, item = _make_course_with_project(db_session, weight=1.0)
+    user = User(external_ref="lp-1", full_name="U", role="student")
+    db_session.add(user)
+    db_session.flush()
+    db_session.add(Enrollment(
+        user_id=user.id, course_id=course.id, course_version_id=version.id, status=EnrollmentStatus.ACTIVE,
+    ))
+    sub = ProjectSubmission(
+        learning_item_id=item.id, user_id=user.id, attempt_number=1,
+        status=ProjectSubmissionStatus.ACCEPTED, score=90.0,
+    )
+    db_session.add(sub)
+    db_session.commit()
+
+    recompute_progress_for_project(db_session, sub)
+
+    progress = db_session.query(Progress).filter(Progress.user_id == user.id, Progress.course_id == course.id).first()
+    assert progress is not None
+    assert progress.completed_items == 1
+    assert progress.total_items == 1
+    assert progress.points == 90
+
+
+def test_structural_node_completed_reflects_required_children(db_session):
+    """Регресс: родительские разделы (module/.../subtopic) никак не
+    агрегировали завершённость детей — completed у них всегда был False,
+    даже если все обязательные дочерние элементы уже пройдены."""
+    course, version, item = _make_course_with_project(db_session)
+    module = LearningItem(
+        course_version_id=version.id, type=LearningItemType.MODULE, title="Модуль", position=0,
+    )
+    db_session.add(module)
+    db_session.flush()
+    item.parent_id = module.id
+
+    optional_theory = LearningItem(
+        course_version_id=version.id, type=LearningItemType.THEORY, title="Необязательный материал",
+        parent_id=module.id, is_required=False, content="x",
+    )
+    db_session.add(optional_theory)
+    db_session.commit()
+
+    user = User(external_ref="lp-1", full_name="U", role="student")
+    db_session.add(user)
+    db_session.commit()
+
+    items = [module, item, optional_theory]
+
+    def module_node():
+        tree = build_student_tree(db_session, user.id, items)
+        return next(n for n in tree if n.id == module.id)
+
+    # Единственный обязательный ребёнок (проект) ещё не пройден.
+    assert module_node().completed is False
+
+    sub = ProjectSubmission(
+        learning_item_id=item.id, user_id=user.id, attempt_number=1,
+        status=ProjectSubmissionStatus.ACCEPTED, score=100.0,
+    )
+    db_session.add(sub)
+    db_session.commit()
+
+    # Необязательный материал так и не пройден — на завершённость раздела
+    # это не влияет, учитываются только обязательные дети.
+    assert module_node().completed is True
+
+
+def test_snap_task_completable_only_by_explicit_action(db_session):
+    """snap_task/gdevelop_task/turtle_task не имеют автопроверки (README) —
+    единственный способ получить зелёную отметку — явное действие ученика
+    через mark_content_item_completed (кнопка на фронте), не сам факт
+    существования элемента."""
+    course, version, item = _make_course_with_project(db_session)  # версия/курс, проект не используется
+    snap_item = LearningItem(course_version_id=version.id, type=LearningItemType.SNAP_TASK, title="Snap!")
+    db_session.add(snap_item)
+    db_session.commit()
+
+    user = User(external_ref="lp-1", full_name="U", role="student")
+    db_session.add(user)
+    db_session.commit()
+
+    tree = build_student_tree(db_session, user.id, [snap_item])
+    assert tree[0].completed is False
+
+    mark_content_item_completed(db_session, user.id, snap_item)
+
+    tree = build_student_tree(db_session, user.id, [snap_item])
+    assert tree[0].completed is True

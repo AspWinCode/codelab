@@ -3,12 +3,26 @@ import {
   Alert, Box, Button, Checkbox, Chip, Container, Divider, Drawer, FormControlLabel,
   FormGroup, List, ListItem, ListItemButton, ListItemIcon, ListItemText, Paper, Stack, TextField, Typography,
 } from '@mui/material';
-import { SyntheticEvent, useEffect, useRef, useState } from 'react';
+import { SyntheticEvent, useCallback, useEffect, useRef, useState } from 'react';
 import { useParams, useSearchParams } from 'react-router-dom';
 import { api, LearningItemTree, ProblemForStudent, ProjectSubmission, QuizAttempt, RunResult, Submission } from '../api';
+import CodeEditor from '../components/CodeEditor';
 import Layout from '../components/Layout';
 import { FONT_CODE } from '../theme';
+import { clearLocalDraft, resolveInitialCode, writeLocalDraft } from '../utils/draftStorage';
 import { renderContentHtml } from '../utils/renderContent';
+
+const DRAFT_SAVE_DEBOUNCE_MS = 1200;
+
+type SaveStatus = 'idle' | 'unsaved' | 'saving' | 'saved' | 'error';
+
+const SAVE_STATUS_LABEL: Record<SaveStatus, string> = {
+  idle: '',
+  unsaved: 'Есть несохранённые изменения…',
+  saving: 'Сохранение…',
+  saved: 'Черновик сохранён',
+  error: 'Не удалось сохранить черновик — проверьте соединение',
+};
 
 const POLL_INTERVAL_MS = 1000;
 const TERMINAL_STATUSES = new Set(['done', 'cancelled', 'system_error']);
@@ -19,6 +33,13 @@ const TYPE_LABEL: Record<string, string> = {
   quiz: 'Тест', task: 'Задача', manual: 'Ручное задание', checkpoint: 'Контрольная точка',
   snap_task: 'Задание Snap!', gdevelop_task: 'Задание GDevelop', turtle_task: 'Задание Черепашка', project: 'Проект',
 };
+
+// Материалы без собственного действия завершения (в отличие от theory,
+// у которой уже есть "Дальше") — должны получить кнопку "Отметить
+// изученным", иначе индикатор в дереве для них никогда не загорится
+// (backend/app/services/course_admin.py::mark_content_item_completed
+// обрабатывает их тип, но раньше фронт никогда не звал этот эндпоинт).
+const MATERIAL_COMPLETE_TYPES = new Set(['video', 'file', 'link', 'manual', 'checkpoint']);
 
 const PROJECT_STATUS_LABEL: Record<string, string> = {
   draft: 'Черновик — не отправлено', submitted: 'Отправлено, ждёт проверки',
@@ -282,12 +303,14 @@ const DEFAULT_PANE_PERCENT = 42;
 const MIN_PANE_PERCENT = 15;
 const MAX_PANE_PERCENT = 85;
 
-function StepIframeTaskView({ item, iframeUrl, iframeTitle, expandLabel }: {
+function StepIframeTaskView({ item, iframeUrl, iframeTitle, expandLabel, courseId, onCompleted }: {
   item: LearningItemTree; iframeUrl: string; iframeTitle: string; expandLabel: string;
+  courseId: number; onCompleted: () => void;
 }) {
   const steps = item.steps || [];
   const [stepIndex, setStepIndex] = useState(0);
   const [expanded, setExpanded] = useState(false);
+  const [marking, setMarking] = useState(false);
   // Ширина левой панели (инструкция) в процентах — ученик тянет разделитель,
   // чтобы расширить редактор (Snap!/GDevelop/Черепашка) вправо или влево за
   // пределы исходных 42%. На мобильной раскладке (xs, панели друг под
@@ -351,6 +374,27 @@ function StepIframeTaskView({ item, iframeUrl, iframeTitle, expandLabel }: {
             <Button variant="contained" disabled={stepIndex >= steps.length - 1} onClick={() => setStepIndex((i) => i + 1)}>Далее</Button>
           </Stack>
         )}
+        {/* Snap!/GDevelop/Черепашка пока без автопроверки (README) — это
+            единственный способ для ученика получить зелёную отметку. */}
+        <Stack direction="row" sx={{ p: 2, borderTop: '1px solid', borderColor: 'divider' }}>
+          <Button
+            variant={item.completed ? 'outlined' : 'contained'}
+            color="success"
+            disabled={item.completed || marking}
+            startIcon={item.completed ? <CheckCircle fontSize="small" /> : undefined}
+            onClick={async () => {
+              setMarking(true);
+              try {
+                await api.completeItem(courseId, item.id);
+                onCompleted();
+              } finally {
+                setMarking(false);
+              }
+            }}
+          >
+            {item.completed ? 'Выполнено' : 'Отметить выполненным'}
+          </Button>
+        </Stack>
       </Box>
 
       {!expanded && (
@@ -397,7 +441,7 @@ function StepIframeTaskView({ item, iframeUrl, iframeTitle, expandLabel }: {
  * локальный стейт при переключении на другой тест (та же проблема, что
  * чинили для code-редактора задач — старые отметки не должны переползать
  * на новый тест). */
-function QuizView({ item }: { item: LearningItemTree }) {
+function QuizView({ item, onSubmitted }: { item: LearningItemTree; onSubmitted: () => void }) {
   const questions = item.quiz_questions || [];
   const [selected, setSelected] = useState<Set<number>[]>(() => questions.map(() => new Set()));
   const [result, setResult] = useState<QuizAttempt | null>(null);
@@ -427,6 +471,9 @@ function QuizView({ item }: { item: LearningItemTree }) {
       const attempt = await api.submitQuizAttempt(item.id, selected.map((s) => Array.from(s)));
       setResult(attempt);
       setLastAttempt(attempt);
+      // Индикатор в дереве курса (зелёный кружок) считается по 100% —
+      // обновляем сразу, без перезагрузки страницы, как и после задачи.
+      onSubmitted();
     } catch (e: any) {
       setError(e.message);
     } finally {
@@ -504,8 +551,8 @@ function TreeNode({ item, depth, selectedId, onSelect }: {
             borderRadius: '0 8px 8px 0',
           }}
         >
-          <ListItemIcon sx={{ minWidth: 28, color: 'text.secondary' }}>
-            <FolderOutlined fontSize="small" />
+          <ListItemIcon sx={{ minWidth: 28, color: item.completed ? 'success.main' : 'text.secondary' }}>
+            {item.completed ? <CheckCircle fontSize="small" /> : <FolderOutlined fontSize="small" />}
           </ListItemIcon>
           <ListItemText
             primary={item.title}
@@ -578,7 +625,79 @@ export default function CoursePage() {
   const [problem, setProblem] = useState<ProblemForStudent | null>(null);
   const [error, setError] = useState('');
   const [lectureNavigationBusy, setLectureNavigationBusy] = useState(false);
+  const [completingItem, setCompletingItem] = useState(false);
+  const [saveStatus, setSaveStatus] = useState<SaveStatus>('idle');
   const pollTimer = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // IDE-002: id пользователя — только для ключа локальной резервной копии
+  // черновика (utils/draftStorage.ts), чтобы она не путалась между учениками
+  // на одном браузере/компьютере. До её загрузки draftStorage использует
+  // временный общий бакет — минимальный, самоисправляющийся зазор (следующее
+  // успешное сохранение на сервер всё расставит по местам).
+  const [meId, setMeId] = useState<number | null>(null);
+  useEffect(() => {
+    api.me().then((me) => setMeId(me.id)).catch(() => {});
+  }, []);
+
+  // Текущая задача, которую видит ученик в редакторе — "источник истины" для
+  // debounce-сохранения и защиты от гонки, когда ответ сервера приходит уже
+  // после того, как ученик переключился на другую задачу: ссылка нужна,
+  // чтобы колбэки fetch/setTimeout всегда знали АКТУАЛЬНУЮ задачу, а не ту,
+  // что была на момент их запуска (замыкание на code/selected было бы
+  // устаревшим).
+  const activeProblemRef = useRef<number | null>(null);
+  const pendingCodeRef = useRef('');
+  const draftSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const flushDraftSave = useCallback((problemRevisionId: number, codeToSave: string) => {
+    if (draftSaveTimer.current) {
+      clearTimeout(draftSaveTimer.current);
+      draftSaveTimer.current = null;
+    }
+    setSaveStatus('saving');
+    api.saveDraft(problemRevisionId, codeToSave)
+      .then(() => {
+        // Пока шёл запрос, ученик мог уже уйти на другую задачу — не
+        // показываем "сохранено" по чужому для текущего экрана результату.
+        if (activeProblemRef.current !== problemRevisionId) return;
+        clearLocalDraft(meId, problemRevisionId); // сервер принял — локальная резервная копия больше не нужна
+        setSaveStatus('saved');
+      })
+      .catch(() => {
+        if (activeProblemRef.current !== problemRevisionId) return;
+        setSaveStatus('error');
+      });
+  }, [meId]);
+
+  // Debounce ещё не успел сработать, а вкладка уже закрывается/обновляется —
+  // отправляем последний известный код синхронно (keepalive переживает уход
+  // со страницы, обычный fetch-промис — нет). Та же функция вызывается и при
+  // размонтировании компонента (уход со страницы курса целиком).
+  const flushOnLeave = useCallback(() => {
+    if (!draftSaveTimer.current || !activeProblemRef.current) return;
+    clearTimeout(draftSaveTimer.current);
+    draftSaveTimer.current = null;
+    try {
+      fetch('/api/submissions/draft', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        keepalive: true,
+        body: JSON.stringify({ problem_revision_id: activeProblemRef.current, code: pendingCodeRef.current }),
+      });
+    } catch {
+      // Уже есть localStorage-снимок на каждое изменение (handleCodeChange) — он переживёт закрытие вкладки и без этого запроса.
+    }
+  }, []);
+
+  useEffect(() => {
+    window.addEventListener('beforeunload', flushOnLeave);
+    return () => {
+      window.removeEventListener('beforeunload', flushOnLeave);
+      flushOnLeave();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => {
     api.getTree(Number(courseId)).then((t) => {
@@ -595,7 +714,24 @@ export default function CoursePage() {
     if (pollTimer.current) clearInterval(pollTimer.current);
   }, []);
 
+  const handleCodeChange = (value: string) => {
+    setCode(value);
+    pendingCodeRef.current = value;
+    const problemRevisionId = activeProblemRef.current;
+    if (!problemRevisionId) return;
+    // Мгновенный локальный снимок — страховка на случай быстрого ухода или
+    // ошибки сети, ПЕРЕД debounce-запросом на сервер, не вместо него.
+    writeLocalDraft(meId, problemRevisionId, value);
+    setSaveStatus('unsaved');
+    if (draftSaveTimer.current) clearTimeout(draftSaveTimer.current);
+    draftSaveTimer.current = setTimeout(() => flushDraftSave(problemRevisionId, value), DRAFT_SAVE_DEBOUNCE_MS);
+  };
+
   const selectItem = (item: LearningItemTree) => {
+    // Не ждём debounce — последние несколько секунд набора на ПРЕДЫДУЩЕЙ
+    // задаче должны уйти на сервер до переключения, а не потеряться.
+    flushOnLeave();
+
     setSelected(item);
     setRunResult(null);
     setSubmission(null);
@@ -605,15 +741,62 @@ export default function CoursePage() {
     // загрузки problem, подставляется черновик/шаблон именно этой задачи.
     setCode('');
     setStdin('');
+    setSaveStatus('idle');
+    pendingCodeRef.current = '';
+    activeProblemRef.current = item.type === 'task' ? item.problem_revision_id ?? null : null;
     api.setLastPosition(Number(courseId), item.id)
       .then(() => api.getTree(Number(courseId)).then(setTree))
       .catch(() => {});
     if (item.type === 'task' && item.problem_revision_id) {
-      api.mySubmissions(item.problem_revision_id).then(setHistory).catch(() => {});
-      api.getProblem(item.problem_revision_id).then((p) => {
+      const problemRevisionId = item.problem_revision_id;
+      api.mySubmissions(problemRevisionId).then(setHistory).catch(() => {});
+      api.getProblem(problemRevisionId).then((p) => {
+        // Пока грузилась задача, ученик уже мог уйти на другую — не
+        // подставляем её код/статус в уже неактуальный экран.
+        if (activeProblemRef.current !== problemRevisionId) return;
         setProblem(p);
-        setCode(p.draft_code ?? p.template_code ?? '');
+        const { code: initialCode, shouldPushToServer, source } = resolveInitialCode({
+          userId: meId,
+          problemRevisionId,
+          serverDraftCode: p.draft_code,
+          serverDraftUpdatedAt: p.draft_updated_at,
+          templateCode: p.template_code,
+        });
+        setCode(initialCode);
+        pendingCodeRef.current = initialCode;
+        if (shouldPushToServer) {
+          // Локальная резервная копия была новее серверного черновика —
+          // досылаем её, чтобы сервер и другие вкладки/устройства её тоже увидели.
+          flushDraftSave(problemRevisionId, initialCode);
+        } else {
+          // source==='template' — это ещё не черновик, а стартовая заготовка:
+          // ничего не сохранено, статус "Черновик сохранён" был бы неправдой.
+          setSaveStatus(source === 'server' ? 'saved' : 'idle');
+        }
       }).catch((e) => setError(e.message));
+    }
+  };
+
+  const refreshTreeAndSelected = () => {
+    api.getTree(Number(courseId)).then((t) => {
+      setTree(t);
+      if (selected) {
+        const refreshed = flatten(t).find((i) => i.id === selected.id);
+        if (refreshed) setSelected(refreshed);
+      }
+    }).catch(() => {});
+  };
+
+  const markSelectedCompleted = async () => {
+    if (!selected) return;
+    setCompletingItem(true);
+    try {
+      await api.completeItem(Number(courseId), selected.id);
+      refreshTreeAndSelected();
+    } catch (e: any) {
+      setError(e.message);
+    } finally {
+      setCompletingItem(false);
     }
   };
 
@@ -644,6 +827,10 @@ export default function CoursePage() {
             if (selected.problem_revision_id) {
               api.mySubmissions(selected.problem_revision_id).then(setHistory).catch(() => {});
             }
+            // Индикатор в дереве курса (зелёный кружок у задачи, и у
+            // родительских разделов, если это была последняя обязательная
+            // задача) — обновляем сразу, без перезагрузки страницы.
+            refreshTreeAndSelected();
           }
         } catch (e: any) {
           setError(e.message);
@@ -703,9 +890,9 @@ export default function CoursePage() {
 
         <Box sx={{ flex: 1, minWidth: 0 }}>
           {selected && selected.type === 'snap_task' ? (
-            <StepIframeTaskView item={selected} iframeUrl={SNAP_URL} iframeTitle="Snap!" expandLabel="Snap! на весь экран" />
+            <StepIframeTaskView item={selected} iframeUrl={SNAP_URL} iframeTitle="Snap!" expandLabel="Snap! на весь экран" courseId={Number(courseId)} onCompleted={refreshTreeAndSelected} />
           ) : selected && selected.type === 'gdevelop_task' ? (
-            <StepIframeTaskView item={selected} iframeUrl={GDEVELOP_URL} iframeTitle="GDevelop" expandLabel="GDevelop на весь экран" />
+            <StepIframeTaskView item={selected} iframeUrl={GDEVELOP_URL} iframeTitle="GDevelop" expandLabel="GDevelop на весь экран" courseId={Number(courseId)} onCompleted={refreshTreeAndSelected} />
           ) : selected && selected.type === 'turtle_task' ? (
             <StepIframeTaskView
               item={selected}
@@ -715,9 +902,11 @@ export default function CoursePage() {
               iframeUrl={`${TURTLE_URL}?task=${selected.id}&blank=1`}
               iframeTitle="Черепашка"
               expandLabel="Черепашка на весь экран"
+              courseId={Number(courseId)}
+              onCompleted={refreshTreeAndSelected}
             />
           ) : selected && selected.type === 'quiz' ? (
-            <QuizView key={selected.id} item={selected} />
+            <QuizView key={selected.id} item={selected} onSubmitted={refreshTreeAndSelected} />
           ) : (
           <Container maxWidth="md" sx={{ py: 4 }}>
             {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
@@ -748,6 +937,22 @@ export default function CoursePage() {
                       onClick={() => nextLecture && moveLecture(nextLecture, true)}
                     >
                       Дальше
+                    </Button>
+                  </Stack>
+                )}
+                {/* video/file/link/manual/checkpoint — раньше нечем было
+                    отметить такой материал пройденным (только у теории была
+                    кнопка "Дальше"), индикатор в дереве никогда не загорался. */}
+                {MATERIAL_COMPLETE_TYPES.has(selected.type) && (
+                  <Stack direction="row" sx={{ mt: 4 }}>
+                    <Button
+                      variant={selected.completed ? 'outlined' : 'contained'}
+                      color="success"
+                      disabled={selected.completed || completingItem}
+                      startIcon={selected.completed ? <CheckCircle fontSize="small" /> : undefined}
+                      onClick={markSelectedCompleted}
+                    >
+                      {selected.completed ? 'Изучено' : 'Отметить изученным'}
                     </Button>
                   </Stack>
                 )}
@@ -795,12 +1000,21 @@ export default function CoursePage() {
                   </Box>
                 )}
 
-                <TextField
-                  multiline fullWidth minRows={12} maxRows={24}
-                  value={code} onChange={(e) => setCode(e.target.value)}
-                  inputProps={{ style: { fontFamily: FONT_CODE, fontSize: '0.875rem' } }}
-                  sx={{ mb: 1.5, '& .MuiOutlinedInput-root': { bgcolor: 'background.paper' } }}
-                />
+                <Box sx={{ mb: 0.5 }}>
+                  <CodeEditor
+                    key={selected.id}
+                    value={code}
+                    onChange={handleCodeChange}
+                    language={problem?.language ?? 'python3'}
+                  />
+                </Box>
+                <Typography
+                  variant="caption"
+                  color={saveStatus === 'error' ? 'error' : 'text.secondary'}
+                  sx={{ display: 'block', minHeight: '1.2em', mb: 1 }}
+                >
+                  {SAVE_STATUS_LABEL[saveStatus]}
+                </Typography>
                 <TextField
                   label="stdin для «Запустить»" helperText="Каждое значение input() — с новой строки"
                   multiline fullWidth minRows={2} maxRows={6}

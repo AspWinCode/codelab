@@ -222,6 +222,10 @@ export interface ProblemForStudent {
   visible_tests: ProblemTest[];
   template_code: string | null;
   draft_code: string | null;
+  // Момент последнего серверного сохранения черновика — используется для
+  // сравнения с локальной резервной копией (см. utils/draftStorage.ts),
+  // чтобы не перезаписать более свежие несохранённые правки.
+  draft_updated_at: string | null;
 }
 
 export const api = {
@@ -239,6 +243,13 @@ export const api = {
   mySubmissions: (problemRevisionId: number) =>
     request<Submission[]>(`/submissions?problem_revision_id=${problemRevisionId}`),
   getProblem: (problemRevisionId: number) => request<ProblemForStudent>(`/courses/problems/${problemRevisionId}`),
+  // IDE-002: автосохранение кода без прогона/отправки — фронт шлёт это с
+  // debounce по мере набора (CoursePage), не только попутно с run()/submit().
+  saveDraft: (problem_revision_id: number, code: string) =>
+    request<{ updated_at: string }>('/submissions/draft', {
+      method: 'PUT',
+      body: JSON.stringify({ problem_revision_id, code }),
+    }),
   submitQuizAttempt: (itemId: number, answers: number[][]) =>
     request<QuizAttempt>(`/courses/quizzes/${itemId}/attempts`, { method: 'POST', body: JSON.stringify({ answers }) }),
   myQuizAttempts: (itemId: number) => request<QuizAttempt[]>(`/courses/quizzes/${itemId}/attempts`),

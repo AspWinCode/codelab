@@ -6,12 +6,40 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.deps import get_current_user, require_role
 from app.models import Draft, ProblemRevision, Submission, SubmissionStatus, User
-from app.schemas import ManualGradeIn, RunRequest, RunResult, SubmissionCreate, SubmissionOut
+from app.schemas import DraftIn, DraftOut, ManualGradeIn, RunRequest, RunResult, SubmissionCreate, SubmissionOut
 from app.services.error_explain import explain_stderr_ru, explain_timeout_ru
 from app.services.progress_calc import apply_manual_grade
 from app.services.runner import run_for_problem
 
 router = APIRouter()
+
+
+def _upsert_draft(db: Session, user_id: int, problem_revision_id: int, code: str) -> Draft:
+    draft = (
+        db.query(Draft)
+        .filter(Draft.user_id == user_id, Draft.problem_revision_id == problem_revision_id)
+        .first()
+    )
+    if draft:
+        draft.code = code
+    else:
+        draft = Draft(user_id=user_id, problem_revision_id=problem_revision_id, code=code)
+        db.add(draft)
+    db.commit()
+    db.refresh(draft)
+    return draft
+
+
+@router.put("/draft", response_model=DraftOut)
+def save_draft(payload: DraftIn, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    """IDE-002: автосохранение кода по мере набора (с debounce на фронте) —
+    отдельно от "Запустить"/"Отправить", чтобы код не терялся при обычном
+    переключении между задачами или уходе со страницы без явного действия."""
+    problem = db.query(ProblemRevision).filter(ProblemRevision.id == payload.problem_revision_id).first()
+    if not problem:
+        raise HTTPException(status_code=404, detail="Задача не найдена")
+    draft = _upsert_draft(db, user.id, payload.problem_revision_id, payload.code)
+    return DraftOut(updated_at=draft.updated_at)
 
 
 @router.post("/run", response_model=RunResult)
@@ -20,16 +48,7 @@ def run_code(payload: RunRequest, db: Session = Depends(get_db), user: User = De
     if not problem:
         raise HTTPException(status_code=404, detail="Задача не найдена")
 
-    draft = (
-        db.query(Draft)
-        .filter(Draft.user_id == user.id, Draft.problem_revision_id == problem.id)
-        .first()
-    )
-    if draft:
-        draft.code = payload.code
-    else:
-        db.add(Draft(user_id=user.id, problem_revision_id=problem.id, code=payload.code))
-    db.commit()
+    _upsert_draft(db, user.id, problem.id, payload.code)
 
     # db.commit() инвалидирует закэшированные атрибуты ORM-объектов
     # (SQLAlchemy expire_on_commit=True по умолчанию) — обращаемся к полям,

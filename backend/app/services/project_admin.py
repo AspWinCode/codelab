@@ -36,6 +36,7 @@ from app.schemas import (
 )
 from app.services.lms_client import notify_project_submission_webhook
 from app.services.notifications import notify
+from app.services.progress_calc import recompute_progress_for_project
 from app.services.project_files import delete_project_file, project_file_path, save_project_file
 
 logger = logging.getLogger(__name__)
@@ -398,6 +399,8 @@ def apply_project_review(db: Session, submission_id: int, payload: ProjectReview
     submission.reviewed_by_id = reviewer_id
     db.commit()
     db.refresh(submission)
+
+    recompute_progress_for_project(db, submission)  # GRD-005, индикатор "пройдено" в дереве курса
 
     item = db.query(LearningItem).filter(LearningItem.id == submission.learning_item_id).first()
     title = item.title if item else "проект"

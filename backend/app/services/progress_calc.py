@@ -17,6 +17,8 @@ from app.models import (
     LearningItemType,
     NotificationType,
     ProblemRevision,
+    ProjectSubmission,
+    ProjectSubmissionStatus,
     Progress,
     QuizAttempt,
     Submission,
@@ -101,11 +103,31 @@ def resolve_official_quiz_score(db: Session, user_id: int, item_id: int) -> Opti
     return best[0] if best else None
 
 
+def _latest_project_submission(db: Session, user_id: int, item_id: int) -> Optional[ProjectSubmission]:
+    """"На доработку" заводит новую попытку (attempt_number+1), старая
+    остаётся в истории (см. app/services/project_admin.py) — для прогресса
+    и индикатора "пройдено" важна только последняя."""
+    return (
+        db.query(ProjectSubmission)
+        .filter(ProjectSubmission.user_id == user_id, ProjectSubmission.learning_item_id == item_id)
+        .order_by(ProjectSubmission.attempt_number.desc())
+        .first()
+    )
+
+
 def _resolve_official_item_score(db: Session, user_id: int, item: LearningItem) -> Optional[float]:
     if item.type == LearningItemType.TASK and item.problem_revision_id:
         return resolve_official_score(db, user_id, item.problem_revision_id)
     if item.type == LearningItemType.QUIZ:
         return resolve_official_quiz_score(db, user_id, item.id)
+    if item.type == LearningItemType.PROJECT:
+        submission = _latest_project_submission(db, user_id, item.id)
+        if not submission or submission.status != ProjectSubmissionStatus.ACCEPTED:
+            return None
+        # Тренер не обязан проставлять числовую оценку, чтобы принять работу
+        # (review_comment/score опциональны) — считаем её полным баллом, раз
+        # статус "принято" уже и есть критерий прохождения для проекта.
+        return submission.score if submission.score is not None else 100.0
     return None
 
 
@@ -113,7 +135,10 @@ def is_item_passed(db: Session, user_id: int, item: LearningItem) -> bool:
     """Задача/тест считаются пройденными только при ПОЛНОМ балле (100) —
     частично верное решение (Wrong Answer с частичным score > 0 за
     пройденные тесты) не должно засчитываться как решённое, открывать
-    зависимый контент или попадать в "решено" на дашборде/в дереве курса."""
+    зависимый контент или попадать в "решено" на дашборде/в дереве курса.
+    Проект считается пройденным по статусу "принято" тренером — числовая
+    оценка на нём опциональна и не обязана достигать 100, поэтому не
+    используем общий порог "score >= 100" ниже (см. _resolve_official_item_score)."""
     if item.type == LearningItemType.TASK and item.problem_revision_id:
         submission = _official_submission(db, user_id, item.problem_revision_id)
         if not submission or _effective_score(submission) < 100:
@@ -121,6 +146,9 @@ def is_item_passed(db: Session, user_id: int, item: LearningItem) -> bool:
         # A full score from the judge must be Accepted. A teacher's explicit
         # manual grade may override the automatic verdict.
         return submission.verdict == Verdict.ACCEPTED or submission.manual_score_override is not None
+    if item.type == LearningItemType.PROJECT:
+        submission = _latest_project_submission(db, user_id, item.id)
+        return bool(submission and submission.status == ProjectSubmissionStatus.ACCEPTED)
     score = _resolve_official_item_score(db, user_id, item)
     return score is not None and score >= 100
 
@@ -147,6 +175,22 @@ def recompute_progress_for_quiz_attempt(db: Session, attempt: QuizAttempt) -> No
     enrollments = (
         db.query(Enrollment)
         .filter(Enrollment.user_id == attempt.user_id, Enrollment.course_version_id == item.course_version_id)
+        .all()
+    )
+    for enrollment in enrollments:
+        _recompute_course_progress(db, enrollment)
+
+
+def recompute_progress_for_project(db: Session, submission: ProjectSubmission) -> None:
+    """Аналог recompute_progress_for_submission для проекта — вызывается
+    после решения тренера (принято/на доработку), см.
+    app/services/project_admin.py::apply_project_review."""
+    item = db.query(LearningItem).filter(LearningItem.id == submission.learning_item_id).first()
+    if not item:
+        return
+    enrollments = (
+        db.query(Enrollment)
+        .filter(Enrollment.user_id == submission.user_id, Enrollment.course_version_id == item.course_version_id)
         .all()
     )
     for enrollment in enrollments:
@@ -180,7 +224,7 @@ def _recompute_course_progress(db: Session, enrollment: Enrollment) -> None:
         db.query(LearningItem)
         .filter(
             LearningItem.course_version_id == enrollment.course_version_id,
-            LearningItem.type.in_([LearningItemType.TASK, LearningItemType.QUIZ]),
+            LearningItem.type.in_([LearningItemType.TASK, LearningItemType.QUIZ, LearningItemType.PROJECT]),
         )
         .all()
     )
@@ -196,8 +240,11 @@ def _recompute_course_progress(db: Session, enrollment: Enrollment) -> None:
         score = _resolve_official_item_score(db, enrollment.user_id, item)
         if score is not None:
             points += score * item.weight  # очки — по фактическому баллу, в т.ч. частичному
-            if score >= 100:  # "решено" — только при полном балле, см. is_item_passed
-                completed += 1
+        # Не "score >= 100" напрямую — у проекта критерий прохождения
+        # это статус "принято", а не обязательно полный балл (см.
+        # is_item_passed/_resolve_official_item_score выше).
+        if is_item_passed(db, enrollment.user_id, item):
+            completed += 1
 
     progress = (
         db.query(Progress)

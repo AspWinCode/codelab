@@ -151,6 +151,28 @@ def _strip_quiz_answers(nodes: list[LearningItemTree]) -> None:
         _strip_quiz_answers(node.children)
 
 
+def _propagate_structural_completion(nodes: list[LearningItemTree]) -> bool:
+    """Родительские разделы (module/submodule/topic/subtopic) сами не имеют
+    критерия прохождения — только организационная иерархия (см.
+    LearningItemType) — поэтому их `completed` не участвует в
+    completed_ids/is_item_passed выше, а выводится здесь снизу вверх:
+    раздел "пройден", если пройдены ВСЕ его обязательные дочерние элементы
+    (и в нём вообще есть хоть один обязательный элемент — иначе пустой или
+    полностью необязательный раздел не должен ложно подсвечиваться
+    зелёным). Возвращает True, если ХОТЯ БЫ ОДИН узел из nodes пройден —
+    не используется вызывающим кодом верхнего уровня, но нужен для
+    рекурсии по промежуточным уровням с одним дочерним узлом."""
+    any_completed = False
+    for node in nodes:
+        if node.children:
+            _propagate_structural_completion(node.children)
+            required_children = [c for c in node.children if c.is_required]
+            node.completed = bool(required_children) and all(c.completed for c in required_children)
+        if node.completed:
+            any_completed = True
+    return any_completed
+
+
 def build_student_tree(db: Session, user_id: int, items: list[LearningItem]) -> list[LearningItemTree]:
     items_by_id = {i.id: i for i in items}
     unlocked_ids = {i.id for i in items if is_item_unlocked(db, user_id, i, items_by_id)}
@@ -167,15 +189,21 @@ def build_student_tree(db: Session, user_id: int, items: list[LearningItem]) -> 
     # здесь достаточно — не может остаться неархивный потомок архивного узла.
     visible_items = [i for i in items if not i.is_archived]
     tree = build_tree(visible_items, unlocked_ids, completed_ids)
+    _propagate_structural_completion(tree)
     _strip_quiz_answers(tree)
     return tree
 
 
 def mark_content_item_completed(db: Session, user_id: int, item: LearningItem) -> None:
-    """Отмечает материал пройденным при его открытии.
+    """Отмечает материал пройденным — по явному действию ученика (кнопка
+    "Дальше"/"Изучено"/"Отметить выполненным" на фронте), не просто по факту
+    открытия страницы.
 
-    Структурные узлы и интерактивные/оцениваемые задания не закрываются
-    этим методом: у них собственные условия завершения.
+    Структурные узлы и оцениваемые типы (task/quiz/project) не закрываются
+    этим методом — у них есть объективный критерий прохождения (полный балл
+    / статус "принято"), см. is_item_passed в progress_calc.py. Snap!/
+    GDevelop/Черепашка сюда входят — для них пока нет автопроверки (README),
+    поэтому это единственный способ когда-либо получить зелёную отметку.
     """
     completable_types = {
         LearningItemType.THEORY,
@@ -184,6 +212,9 @@ def mark_content_item_completed(db: Session, user_id: int, item: LearningItem) -
         LearningItemType.LINK,
         LearningItemType.MANUAL,
         LearningItemType.CHECKPOINT,
+        LearningItemType.SNAP_TASK,
+        LearningItemType.GDEVELOP_TASK,
+        LearningItemType.TURTLE_TASK,
     }
     if item.type not in completable_types:
         return
@@ -332,6 +363,7 @@ def to_student_problem_out(db: Session, task: ProblemRevision, user: User) -> Pr
         visible_tests=visible,
         template_code=task.template_code,
         draft_code=draft.code if draft else None,
+        draft_updated_at=draft.updated_at if draft else None,
     )
 
 
