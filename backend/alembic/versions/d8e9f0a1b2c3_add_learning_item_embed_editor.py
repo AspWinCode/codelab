@@ -6,7 +6,7 @@ type=project по-прежнему идёт по всему циклу ProjectSu
 загрузки файла, см. app/routers/projects.py и frontend CoursePage.tsx.
 
 Revision ID: d8e9f0a1b2c3
-Revises: c7d8e9f0a1b2
+Revises: d2e3f4a5b6c7
 Create Date: 2026-10-21
 
 """
@@ -15,7 +15,7 @@ from alembic import op
 
 
 revision = 'd8e9f0a1b2c3'
-down_revision = 'c7d8e9f0a1b2'
+down_revision = 'd2e3f4a5b6c7'
 branch_labels = None
 depends_on = None
 
