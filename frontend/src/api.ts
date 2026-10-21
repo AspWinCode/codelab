@@ -97,6 +97,9 @@ export interface LearningItem {
   steps: SnapStep[] | null;
   quiz_questions: QuizQuestion[] | null;
   due_at: string | null;
+  // Для type="project": если "turtle" — справа показывается iframe
+  // редактора черепашки вместо формы ручной загрузки файла.
+  embed_editor: string | null;
 }
 
 // Проект с ручной проверкой (type=project): ученик прикрепляет файлы,

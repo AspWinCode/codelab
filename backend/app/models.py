@@ -209,6 +209,13 @@ class LearningItem(Base):
     # Срок сдачи для type=project — используется для бейджа "просрочено" у
     # ученика и в списке сдач тренера; для остальных типов не заполняется.
     due_at = Column(DateTime(timezone=True), nullable=True)
+    # Для type=project: если задан — справа показывается тот же статичный
+    # iframe-редактор, что у snap_task/gdevelop_task/turtle_task (сейчас
+    # единственное значение — "turtle"), а не форма ручной загрузки файла.
+    # Проверка остаётся ручной (ProjectSubmission) — редактор только отправляет
+    # код родителю через postMessage, который сам прикрепляет его файлом и
+    # отправляет на проверку. См. frontend CoursePage.tsx::ProjectView.
+    embed_editor = Column(String(32), nullable=True)
     # Шаги для type=snap_task/gdevelop_task/turtle_task: [{"title": str,
     # "content": html}, ...]. Панель редактора в них не участвует — она одна
     # и статична на весь элемент, шаги листают только текст инструкции слева.

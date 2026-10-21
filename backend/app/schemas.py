@@ -174,6 +174,9 @@ class LearningItemCreate(BaseModel):
     quiz_questions: Optional[List[QuizQuestion]] = None
     # Только для type="project" — срок сдачи (см. ProjectSubmission).
     due_at: Optional[datetime] = None
+    # Только для type="project" — если "turtle", фронтенд показывает справа
+    # iframe-редактор черепашки вместо формы ручной загрузки файла.
+    embed_editor: Optional[str] = None
 
 
 class LearningItemUpdate(BaseModel):
@@ -188,6 +191,7 @@ class LearningItemUpdate(BaseModel):
     steps: Optional[List[SnapStep]] = None
     quiz_questions: Optional[List[QuizQuestion]] = None
     due_at: Optional[datetime] = None
+    embed_editor: Optional[str] = None
 
 
 class LearningItemOut(BaseModel):
@@ -211,6 +215,7 @@ class LearningItemOut(BaseModel):
     # (LearningItemTree) что для методиста, что для ученика.
     quiz_questions: Optional[List[QuizQuestion]] = None
     due_at: Optional[datetime] = None
+    embed_editor: Optional[str] = None
 
     model_config = ConfigDict(from_attributes=True)
 

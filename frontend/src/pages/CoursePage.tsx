@@ -436,6 +436,130 @@ function StepIframeTaskView({ item, iframeUrl, iframeTitle, expandLabel, courseI
   );
 }
 
+/** Проект с редактором "Черепашка" (type=project, embed_editor="turtle"):
+ * тот же iframe, что у turtle_task, но вместо самоотметки — кнопка "Сдать
+ * проект" внутри самого редактора шлёт код родителю через postMessage
+ * ({type:'codelab-turtle-submit', taskId, code}); мы прикрепляем его файлом
+ * к ProjectSubmission и сразу отправляем на проверку тренеру (как
+ * ProjectView, только без формы ручной загрузки — файл приходит из
+ * редактора). Проверяем event.origin/taskId, чтобы не принять сообщение
+ * от постороннего фрейма или от другого задания "Черепашка" на той же
+ * странице. */
+function TurtleProjectView({ item }: { item: LearningItemTree }) {
+  const [submission, setSubmission] = useState<ProjectSubmission | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+
+  const load = useCallback(async () => {
+    try {
+      setSubmission(await api.getProjectSubmission(item.id));
+    } catch (e: any) {
+      setError(e.message);
+    } finally {
+      setLoading(false);
+    }
+  }, [item.id]);
+
+  useEffect(() => {
+    setError('');
+    setSubmission(null);
+    setLoading(true);
+    void load();
+  }, [item.id, load]);
+
+  useEffect(() => {
+    const turtleOrigin = new URL(TURTLE_URL).origin;
+    const onMessage = async (event: MessageEvent) => {
+      if (event.origin !== turtleOrigin) return;
+      const data = event.data as { type?: string; taskId?: number; code?: string } | null;
+      if (!data || data.type !== 'codelab-turtle-submit' || data.taskId !== item.id) return;
+      const source = event.source as Window | null;
+      const reply = (ok: boolean, message: string) => {
+        source?.postMessage({ type: 'codelab-turtle-submit-result', taskId: item.id, ok, message }, turtleOrigin);
+      };
+      const code = typeof data.code === 'string' ? data.code : '';
+      if (!code.trim()) {
+        reply(false, 'Пустой проект — нечего сдавать.');
+        return;
+      }
+      setSubmitting(true);
+      setError('');
+      try {
+        const file = new File([code], `turtle_project_${item.id}.py`, { type: 'text/x-python' });
+        await api.uploadProjectFile(item.id, file);
+        const fresh = await api.getProjectSubmission(item.id);
+        const submitted = await api.submitProjectSubmission(fresh.id);
+        setSubmission(submitted);
+        reply(true, 'Проект отправлен на проверку тренеру.');
+      } catch (e: any) {
+        setError(e.message);
+        reply(false, e.message || 'Не удалось отправить проект.');
+      } finally {
+        setSubmitting(false);
+      }
+    };
+    window.addEventListener('message', onMessage);
+    return () => window.removeEventListener('message', onMessage);
+  }, [item.id]);
+
+  const lastFile = submission && submission.files.length > 0 ? submission.files[submission.files.length - 1] : null;
+
+  return (
+    <Box sx={{ display: 'flex', flexDirection: 'column', height: 'calc(100vh - 64px)', width: '100%' }}>
+      <Box sx={{ p: 2, borderBottom: '1px solid', borderColor: 'divider' }}>
+        <Typography variant="h2" sx={{ mb: 1 }}>{item.title}</Typography>
+        {(item.content || item.description) && (
+          <Box className="preview" sx={{ mb: 1.5 }} dangerouslySetInnerHTML={{ __html: renderContentHtml(item.content || item.description || '') }} />
+        )}
+        {!loading && (
+          <Stack direction="row" spacing={1.5} alignItems="center" flexWrap="wrap" sx={{ rowGap: 1 }}>
+            {submission && (
+              <Chip size="small" color={PROJECT_STATUS_COLOR[submission.status]} label={PROJECT_STATUS_LABEL[submission.status] || submission.status} />
+            )}
+            {submission?.due_at && (
+              <Chip
+                size="small"
+                color={submission.is_overdue ? 'error' : 'default'}
+                label={`Срок сдачи: ${formatDateTime(submission.due_at)}${submission.is_overdue ? ' — просрочено' : ''}`}
+              />
+            )}
+            {submission && submission.attempt_number > 1 && <Chip size="small" label={`Попытка ${submission.attempt_number}`} />}
+            {submitting && <Chip size="small" color="info" label="Отправляем…" />}
+          </Stack>
+        )}
+        {error && <Alert severity="error" sx={{ mt: 1.5 }}>{error}</Alert>}
+        {submission?.status === 'needs_revision' && (
+          <Alert severity="warning" sx={{ mt: 1.5 }}>
+            Тренер вернул работу на доработку. Нажмите «Сдать проект» в редакторе ещё раз — это создаст новую попытку.
+          </Alert>
+        )}
+        {submission && submission.status !== 'draft' && submission.review_comment && (
+          <Box sx={{ mt: 1.5 }}>
+            <Typography variant="subtitle2">Комментарий тренера</Typography>
+            <Typography variant="body2" color="text.secondary">{submission.review_comment}</Typography>
+            {submission.score !== null && <Typography variant="body2" color="text.secondary">Оценка: {submission.score}</Typography>}
+          </Box>
+        )}
+        {lastFile && (
+          <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 1 }}>
+            Последняя сданная версия:{' '}
+            <a href={api.projectFileDownloadUrl(lastFile.id)} target="_blank" rel="noopener">{lastFile.original_filename}</a>
+            {' '}· {formatDateTime(lastFile.uploaded_at)}
+          </Typography>
+        )}
+      </Box>
+      <Box sx={{ flex: 1, position: 'relative' }}>
+        <iframe
+          src={`${TURTLE_URL}?task=${item.id}&blank=1&project=1`}
+          title="Черепашка"
+          style={{ width: '100%', height: '100%', border: 'none', display: 'block' }}
+        />
+      </Box>
+    </Box>
+  );
+}
+
 /** Прохождение теста (type=quiz) — один тип вопроса, несколько правильных
  * ответов (checkbox). key={item.id} на месте использования сбрасывает
  * локальный стейт при переключении на другой тест (та же проблема, что
@@ -905,6 +1029,8 @@ export default function CoursePage() {
               courseId={Number(courseId)}
               onCompleted={refreshTreeAndSelected}
             />
+          ) : selected && selected.type === 'project' && selected.embed_editor === 'turtle' ? (
+            <TurtleProjectView key={selected.id} item={selected} />
           ) : selected && selected.type === 'quiz' ? (
             <QuizView key={selected.id} item={selected} onSubmitted={refreshTreeAndSelected} />
           ) : (
