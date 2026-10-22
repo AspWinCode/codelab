@@ -124,11 +124,11 @@ def create_task(
     return course_admin.create_task(db, course_id, payload, author_id=staff.id)
 
 
-def _ensure_task_owner(db: Session, problem_revision_id: int, staff: User) -> None:
+def _ensure_task_owner(db: Session, problem_revision_id: int, staff: User, *, allow_teacher: bool = False) -> None:
     course = course_admin.get_course_for_task(db, problem_revision_id)
     if course:
-        course_admin.ensure_course_owner(course, staff)
-    elif staff.role not in ("methodist", "admin"):
+        course_admin.ensure_course_owner(course, staff, allow_teacher=allow_teacher)
+    elif staff.role not in ("methodist", "admin") and not (allow_teacher and staff.role == "teacher"):
         # Задача создана, но ещё не привязана в дерево ни одного курса —
         # владельца проверить нечем; пускаем только тех, кто вообще может
         # авторствовать задачи (create_task и так требует того же).
@@ -137,8 +137,11 @@ def _ensure_task_owner(db: Session, problem_revision_id: int, staff: User) -> No
 
 @router.get("/tasks/{problem_revision_id}", response_model=ProblemRevisionOut)
 def get_task(problem_revision_id: int, db: Session = Depends(get_db), staff: User = Depends(resolve_staff_user)):
+    """Read-only — отдаёт задачу целиком, включая скрытые тесты. Доступно
+    и teacher (не только methodist/admin): тренеру нужно видеть задачу
+    полностью при разборе посылки ученика (п.14.10.2026)."""
     task = course_admin.get_task_or_404(db, problem_revision_id)
-    _ensure_task_owner(db, problem_revision_id, staff)
+    _ensure_task_owner(db, problem_revision_id, staff, allow_teacher=True)
     return task
 
 

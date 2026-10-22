@@ -54,12 +54,17 @@ def get_course_or_404(db: Session, course_id: int) -> Course:
     return course
 
 
-def ensure_course_owner(course: Course, staff: User) -> None:
+def ensure_course_owner(course: Course, staff: User, *, allow_teacher: bool = False) -> None:
     """RBAC-002: методист получает доступ только к курсам, которые создал
     сам — не ко всем курсам платформы. Admin — без ограничений; teacher сюда
-    не должен попадать вообще (мутирующие эндпоинты курса на стороне LMS
-    гейтятся codelab.manage, которым обладает только методист)."""
+    по умолчанию не должен попадать (мутирующие эндпоинты курса на стороне
+    LMS гейтятся codelab.manage, которым обладает только методист).
+    allow_teacher=True — для read-only эндпоинтов, где тренеру нужно видеть
+    задачу целиком (включая скрытые тесты) при разборе посылки ученика,
+    аналогично list_courses, где teacher уже видит все опубликованные курсы."""
     if staff.role == "admin":
+        return
+    if allow_teacher and staff.role == "teacher":
         return
     if course.created_by_id != staff.id:
         raise HTTPException(status_code=403, detail="Курс создан другим методистом — нет доступа")

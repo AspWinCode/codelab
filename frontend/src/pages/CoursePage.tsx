@@ -1,7 +1,7 @@
-import { CheckCircle, CloseFullscreen, ExpandLess, ExpandMore, FolderOutlined, Lock, OpenInFull, RadioButtonUnchecked } from '@mui/icons-material';
+import { CheckCircle, CloseFullscreen, ContentCopy, ExpandLess, ExpandMore, FolderOutlined, Lock, OpenInFull, RadioButtonUnchecked } from '@mui/icons-material';
 import {
   Alert, Box, Button, Checkbox, Chip, Container, Divider, Drawer, FormControlLabel,
-  FormGroup, List, ListItem, ListItemButton, ListItemIcon, ListItemText, Paper, Stack, TextField, Typography,
+  FormGroup, IconButton, List, ListItem, ListItemButton, ListItemIcon, ListItemText, Paper, Stack, TextField, Tooltip, Typography,
 } from '@mui/material';
 import { SyntheticEvent, useCallback, useEffect, useRef, useState } from 'react';
 import { useParams, useSearchParams } from 'react-router-dom';
@@ -759,9 +759,14 @@ export default function CoursePage() {
   // временный общий бакет — минимальный, самоисправляющийся зазор (следующее
   // успешное сохранение на сервер всё расставит по местам).
   const [meId, setMeId] = useState<number | null>(null);
+  // Направления ученика (из LMS, см. kodex_sso.py на портале) — используются,
+  // например, чтобы показать кнопку копирования входных данных примеров
+  // только ученикам направления "эксперт" (п.14.10.2026).
+  const [meDirections, setMeDirections] = useState<string[]>([]);
   useEffect(() => {
-    api.me().then((me) => setMeId(me.id)).catch(() => {});
+    api.me().then((me) => { setMeId(me.id); setMeDirections(me.directions || []); }).catch(() => {});
   }, []);
+  const isExpertDirection = meDirections.includes('expert');
 
   // Текущая задача, которую видит ученик в редакторе — "источник истины" для
   // debounce-сохранения и защиты от гонки, когда ответ сервера приходит уже
@@ -873,7 +878,13 @@ export default function CoursePage() {
       .catch(() => {});
     if (item.type === 'task' && item.problem_revision_id) {
       const problemRevisionId = item.problem_revision_id;
-      api.mySubmissions(problemRevisionId).then(setHistory).catch(() => {});
+      api.mySubmissions(problemRevisionId).then((h) => {
+        // Та же гонка, что и с getProblem ниже: если ученик уже переключился
+        // на другую задачу, пока шёл запрос, — не подставляем сюда историю
+        // уже неактуальной (предыдущей) задачи.
+        if (activeProblemRef.current !== problemRevisionId) return;
+        setHistory(h);
+      }).catch(() => {});
       api.getProblem(problemRevisionId).then((p) => {
         // Пока грузилась задача, ученик уже мог уйти на другую — не
         // подставляем её код/статус в уже неактуальный экран.
@@ -949,7 +960,11 @@ export default function CoursePage() {
           if (TERMINAL_STATUSES.has(updated.status)) {
             if (pollTimer.current) clearInterval(pollTimer.current);
             if (selected.problem_revision_id) {
-              api.mySubmissions(selected.problem_revision_id).then(setHistory).catch(() => {});
+              const prid = selected.problem_revision_id;
+              api.mySubmissions(prid).then((h) => {
+                if (activeProblemRef.current !== prid) return;
+                setHistory(h);
+              }).catch(() => {});
             }
             // Индикатор в дереве курса (зелёный кружок у задачи, и у
             // родительских разделов, если это была последняя обязательная
@@ -1116,7 +1131,20 @@ export default function CoursePage() {
                         <Stack spacing={1}>
                           {problem.visible_tests.map((t, i) => (
                             <Stack key={i} direction="row" spacing={2}>
-                              <Box component="pre" sx={{ flex: 1, m: 0, color: 'text.primary', fontFamily: FONT_CODE, fontSize: '0.8125rem', bgcolor: 'background.default', border: '1px solid', borderColor: 'divider', borderRadius: 2, p: 1.5, whiteSpace: 'pre-wrap' }}>{t.input}</Box>
+                              <Box sx={{ position: 'relative', flex: 1 }}>
+                                <Box component="pre" sx={{ m: 0, color: 'text.primary', fontFamily: FONT_CODE, fontSize: '0.8125rem', bgcolor: 'background.default', border: '1px solid', borderColor: 'divider', borderRadius: 2, p: 1.5, pr: isExpertDirection ? 5 : 1.5, whiteSpace: 'pre-wrap' }}>{t.input}</Box>
+                                {isExpertDirection && (
+                                  <Tooltip title="Скопировать входные данные">
+                                    <IconButton
+                                      size="small"
+                                      sx={{ position: 'absolute', top: 4, right: 4 }}
+                                      onClick={() => { navigator.clipboard.writeText(t.input); }}
+                                    >
+                                      <ContentCopy fontSize="inherit" />
+                                    </IconButton>
+                                  </Tooltip>
+                                )}
+                              </Box>
                               <Box component="pre" sx={{ flex: 1, m: 0, color: 'text.primary', fontFamily: FONT_CODE, fontSize: '0.8125rem', bgcolor: 'background.paper', border: '1px solid', borderColor: 'divider', borderRadius: 2, p: 1.5, whiteSpace: 'pre-wrap' }}>{t.expected}</Box>
                             </Stack>
                           ))}
