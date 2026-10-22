@@ -316,6 +316,10 @@ class SubmissionReviewOut(BaseModel):
     manual_score_override: Optional[float]
     manual_comment: Optional[str]
     created_at: datetime
+    # LMS: по этому id (не совпадает с LearningItem.id дерева курса!) можно
+    # запросить GET /lms-admin/tasks/{problem_revision_id} и показать
+    # преподавателю задачу целиком, включая скрытые тесты.
+    problem_revision_id: int
 
 
 

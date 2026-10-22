@@ -670,6 +670,7 @@ def list_course_submissions(db: Session, course_id: int) -> list[SubmissionRevie
             manual_score_override=s.manual_score_override,
             manual_comment=s.manual_comment,
             created_at=s.created_at,
+            problem_revision_id=s.problem_revision_id,
         )
         for s in submissions
     ]
