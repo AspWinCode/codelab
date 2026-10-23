@@ -17,9 +17,11 @@ from app.models import (
     CourseStatus,
     CourseVersion,
     Draft,
+    Enrollment,
     ItemCompletion, LearningItem,
     LearningItemType,
     ProblemRevision,
+    ProjectSubmission,
     QuizAttempt,
     Submission,
     SubmissionStatus,
@@ -532,6 +534,80 @@ def set_item_archived(db: Session, item_id: int, archived: bool) -> LearningItem
     return item
 
 
+def _match_item_trees(old_items: list[LearningItem], new_items: list[LearningItem]) -> dict[int, int]:
+    """Сопоставляет айтемы старой и новой версии курса топ-даун по (type,
+    title) среди "братьев" под уже сопоставленным родителем — используется,
+    когда source_item_id ещё не проставлен (первая публикация после того,
+    как это поле появилось). Работает надёжно, пока структура курса между
+    публикациями не менялась (типичный сценарий "republish без правок");
+    несопоставленные айтемы просто не переносим — лучше оставить посылку
+    недоступной, чем привязать её не к тому элементу."""
+    old_children: dict[Optional[int], list[LearningItem]] = {}
+    for i in old_items:
+        old_children.setdefault(i.parent_id, []).append(i)
+    new_children: dict[Optional[int], list[LearningItem]] = {}
+    for i in new_items:
+        new_children.setdefault(i.parent_id, []).append(i)
+    for bucket in old_children.values():
+        bucket.sort(key=lambda i: i.position)
+    for bucket in new_children.values():
+        bucket.sort(key=lambda i: i.position)
+
+    mapping: dict[int, int] = {}
+
+    def walk(old_parent_id: Optional[int], new_parent_id: Optional[int]) -> None:
+        used_new_ids: set[int] = set()
+        for old in old_children.get(old_parent_id, []):
+            candidate = next(
+                (
+                    n for n in new_children.get(new_parent_id, [])
+                    if n.id not in used_new_ids and n.type == old.type and n.title == old.title
+                ),
+                None,
+            )
+            if candidate is None:
+                continue
+            used_new_ids.add(candidate.id)
+            mapping[old.id] = candidate.id
+            walk(old.id, candidate.id)
+
+    walk(None, None)
+    return mapping
+
+
+def _carry_over_student_data(db: Session, old_version_id: int, new_version_id: int) -> None:
+    """Переносит ProjectSubmission.learning_item_id, ItemCompletion.item_id и
+    Enrollment.last_item_id со старой активной версии курса на новую —
+    иначе при каждой повторной публикации они остаются жёстко привязаны к
+    айтемам версии, которая только что перестала быть активной, и
+    "пропадают" из всех выборок, фильтрующих по course.active_version_id
+    (list_course_submissions, "продолжить обучение" и т.п.)."""
+    old_items = db.query(LearningItem).filter(LearningItem.course_version_id == old_version_id).all()
+    new_items = db.query(LearningItem).filter(LearningItem.course_version_id == new_version_id).all()
+    if not old_items or not new_items:
+        return
+
+    mapping = {i.source_item_id: i.id for i in new_items if i.source_item_id}
+    unmatched_old = [i for i in old_items if i.id not in mapping]
+    if unmatched_old:
+        matched_new_ids = set(mapping.values())
+        remaining_new = [i for i in new_items if i.id not in matched_new_ids]
+        mapping.update(_match_item_trees(unmatched_old, remaining_new))
+    if not mapping:
+        return
+
+    for old_id, new_id in mapping.items():
+        db.query(ProjectSubmission).filter(ProjectSubmission.learning_item_id == old_id).update(
+            {"learning_item_id": new_id}, synchronize_session=False
+        )
+        db.query(ItemCompletion).filter(ItemCompletion.item_id == old_id).update(
+            {"item_id": new_id}, synchronize_session=False
+        )
+        db.query(Enrollment).filter(Enrollment.last_item_id == old_id).update(
+            {"last_item_id": new_id}, synchronize_session=False
+        )
+
+
 async def publish_course(db: Session, course_id: int, actor_id: int | None) -> Course:
     """LMS-005/006: текущий черновик становится неизменяемой опубликованной
     версией (published_at, course.active_version_id), а для дальнейшего
@@ -543,6 +619,14 @@ async def publish_course(db: Session, course_id: int, actor_id: int | None) -> C
         raise HTTPException(status_code=404, detail="Курс не найден")
 
     draft = get_draft_version(db, course_id)
+
+    # Переключение active_version_id ниже осиротит ProjectSubmission/
+    # ItemCompletion/Enrollment.last_item_id, привязанные к айтемам версии,
+    # которая сейчас активна — переносим их на айтемы черновика ДО
+    # переключения (см. _carry_over_student_data).
+    previous_active_version_id = course.active_version_id
+    if previous_active_version_id and previous_active_version_id != draft.id:
+        _carry_over_student_data(db, previous_active_version_id, draft.id)
 
     draft.published_at = datetime.now(timezone.utc)
     course.active_version_id = draft.id
@@ -578,6 +662,7 @@ async def publish_course(db: Session, course_id: int, actor_id: int | None) -> C
             quiz_questions=old.quiz_questions,
             due_at=old.due_at,
             embed_editor=old.embed_editor,
+            source_item_id=old.id,
         )
         db.add(clone)
         db.flush()

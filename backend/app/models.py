@@ -194,6 +194,13 @@ class LearningItem(Base):
     id = Column(Integer, primary_key=True)
     course_version_id = Column(Integer, ForeignKey("course_versions.id"), nullable=False, index=True)
     parent_id = Column(Integer, ForeignKey("learning_items.id"), nullable=True)
+    # Айтем предыдущей версии, из которого сделан этот клон при публикации
+    # (publish_course) — связывает один и тот же логический элемент между
+    # версиями курса, т.к. при каждой публикации айтемы клонируются с новыми
+    # id. Используется, чтобы переносить ProjectSubmission/ItemCompletion/
+    # Enrollment.last_item_id на новый активный айтем вместо того, чтобы они
+    # "терялись", указывая на уже неактивную версию.
+    source_item_id = Column(Integer, ForeignKey("learning_items.id"), nullable=True)
     type = Column(SQLEnum(LearningItemType), nullable=False)
     title = Column(String(255), nullable=False)
     description = Column(Text, nullable=True)
@@ -234,8 +241,14 @@ class LearningItem(Base):
     course_version = relationship("CourseVersion", back_populates="items")
     # remote_side идёт на backref ("parent"), не на "children" — иначе
     # relationship переворачивается: "children" становится скаляром (None),
-    # а "parent" — коллекцией.
-    children = relationship("LearningItem", backref=backref("parent", remote_side="LearningItem.id"))
+    # а "parent" — коллекцией. foreign_keys обязателен — на learning_items
+    # теперь два self-referential FK (parent_id и source_item_id), без него
+    # SQLAlchemy не может понять, по какому из них строить children/parent.
+    children = relationship(
+        "LearningItem",
+        backref=backref("parent", remote_side="LearningItem.id"),
+        foreign_keys="LearningItem.parent_id",
+    )
     problem_revision = relationship("ProblemRevision")
 
 
