@@ -2,8 +2,9 @@
 черновика и запрет редактирования уже опубликованной версии."""
 from app.models import (
     Course, CourseVersion, Enrollment, EnrollmentStatus, ItemCompletion,
-    LearningItem, ProblemRevision, ProjectSubmission,
+    LearningItem, LearningItemType, ProblemRevision, ProjectSubmission,
 )
+from app.services.course_admin import _match_item_trees
 from tests.conftest import as_user, make_user
 
 
@@ -164,6 +165,96 @@ def test_republish_carries_over_project_submissions_and_progress(client, db_sess
 
     enrollment = db_session.query(Enrollment).filter(Enrollment.user_id == student.id).first()
     assert enrollment.last_item_id == new_published_item.id
+
+
+def test_republish_source_item_id_survives_rename_even_with_title_collision(client, db_session):
+    """Как только у айтема проставлен source_item_id (с первой публикации
+    ПОСЛЕ деплоя фикса), перенос ProjectSubmission идёт по нему напрямую,
+    а не по best-effort сопоставлению (type, title) — поэтому даже
+    классический случай-ловушка (методист переименовал айтем с посылками
+    И завёл новый айтем со старым названием) не путает посылку: она
+    остаётся на переименованном айтеме, а не уезжает на новый одноимённый.
+    См. test__match_item_trees_without_source_item_id_can_misattribute_renamed_item
+    для сценария, где source_item_id ещё нет (легаси-айтемы) — там риск,
+    названный в ревью фикса, подтверждается."""
+    methodist = make_user(db_session, "methodist")
+    student = make_user(db_session, "student", external_ref="lp-student-rename")
+
+    as_user(client, methodist)
+    course = client.post("/api/courses", json={"title": "Курс с переименованием"}).json()
+    item = client.post(f"/api/courses/{course['id']}/items", json={
+        "type": "project", "title": "Урок 1", "position": 0,
+    }).json()
+    assert client.post(f"/api/courses/{course['id']}/publish").status_code == 200
+
+    course_row = db_session.query(Course).filter(Course.id == course["id"]).first()
+    published_item = (
+        db_session.query(LearningItem)
+        .filter(LearningItem.course_version_id == course_row.active_version_id)
+        .first()
+    )
+    submission = ProjectSubmission(learning_item_id=published_item.id, user_id=student.id, attempt_number=1)
+    db_session.add(submission)
+    db_session.commit()
+
+    # В черновике: переименовываем клон опубликованного айтема (с которым
+    # логически связана посылка) и заводим НОВЫЙ айтем со старым названием.
+    versions = db_session.query(CourseVersion).filter(CourseVersion.course_id == course["id"]).all()
+    draft = [v for v in versions if v.published_at is None][0]
+    draft_item = db_session.query(LearningItem).filter(LearningItem.course_version_id == draft.id).first()
+    assert client.put(f"/api/courses/items/{draft_item.id}", json={"title": "Урок 2"}).status_code == 200
+    new_item = client.post(f"/api/courses/{course['id']}/items", json={
+        "type": "project", "title": "Урок 1", "position": 1,
+    }).json()
+
+    assert client.post(f"/api/courses/{course['id']}/unpublish").status_code == 200
+    assert client.post(f"/api/courses/{course['id']}/publish").status_code == 200
+
+    db_session.expire_all()
+    course_row = db_session.query(Course).filter(Course.id == course["id"]).first()
+    active_items = {
+        i.title: i.id
+        for i in db_session.query(LearningItem).filter(LearningItem.course_version_id == course_row.active_version_id)
+    }
+    db_session.refresh(submission)
+
+    renamed_item_id = active_items["Урок 2"]
+    new_unrelated_item_id = active_items["Урок 1"]
+    assert submission.learning_item_id != new_unrelated_item_id, (
+        "source_item_id не защитил от title-коллизии — посылка переехала на "
+        "НОВЫЙ, не связанный с ней айтем только потому, что у него совпал "
+        "заголовок со старым названием переименованного айтема"
+    )
+    assert submission.learning_item_id == renamed_item_id
+
+
+def test__match_item_trees_without_source_item_id_can_misattribute_renamed_item():
+    """Подтверждённый ревью риск: _match_item_trees — запасной вариант,
+    используемый ТОЛЬКО для айтемов без source_item_id (легаси-данные,
+    клонированные ДО деплоя этого фикса — т.е. ровно самая первая
+    публикация курса, существовавшего до деплоя). Без source_item_id
+    сопоставление идёт по голому (type, title): если методист переименовал
+    айтем с посылками и завёл НОВЫЙ айтем со старым названием, посылка
+    уезжает на чужой, не связанный с ней айтем — тише, чем падение, но
+    хуже, чем "посылка осталась недоступной" (что обещает docstring
+    _match_item_trees). Разовый риск: на следующей публикации у всех
+    айтемов уже будет свой source_item_id, и этот сценарий становится тем,
+    что проверяет test_republish_source_item_id_survives_rename_even_with_title_collision."""
+    old_items = [LearningItem(id=100, parent_id=None, type=LearningItemType.PROJECT, title="Урок 1", position=0)]
+    # Черновик: клон "Урок 1" переименован в "Урок 2", и добавлен НОВЫЙ
+    # айтем "Урок 1" — оба без source_item_id (легаси, как до этого фикса).
+    new_items = [
+        LearningItem(id=201, parent_id=None, type=LearningItemType.PROJECT, title="Урок 2", position=0),
+        LearningItem(id=202, parent_id=None, type=LearningItemType.PROJECT, title="Урок 1", position=1),
+    ]
+
+    mapping = _match_item_trees(old_items, new_items)
+
+    assert mapping.get(100) == 202, (
+        "если это упало — риск из ревью, видимо, исправлен; обновите этот "
+        "тест и его докстроку, чтобы не описывать уже несуществующее "
+        "ограничение"
+    )
 
 
 def test_methodist_cannot_edit_foreign_course_via_cookie_session(client, db_session):
