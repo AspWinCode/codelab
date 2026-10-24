@@ -209,9 +209,9 @@ export default function ItemEditorPage() {
 
         {uploadError && <Alert severity="error" sx={{ mt: 2 }}>{uploadError}</Alert>}
         <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 1.5 }}>
-          {status === 'saving' && 'сохраняется…'}
-          {status === 'saved' && 'сохранено'}
-          {status === 'error' && 'ошибка сохранения'}
+          {status === 'saving' && <span>сохраняется…</span>}
+          {status === 'saved' && <span>сохранено</span>}
+          {status === 'error' && <span>ошибка сохранения</span>}
         </Typography>
       </Container>
     </Layout>
