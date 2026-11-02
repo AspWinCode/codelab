@@ -23,6 +23,7 @@ from app.models import (
     ProblemRevision,
     ProjectSubmission,
     QuizAttempt,
+    OgeAttempt,
     Submission,
     SubmissionStatus,
     User,
@@ -45,6 +46,7 @@ from app.services.progress_calc import (
     is_item_passed,
     is_item_unlocked,
     recompute_progress_for_quiz_attempt,
+    recompute_progress_for_oge_attempt,
 )
 from app.services.tree_rules import validate_parent
 
@@ -155,6 +157,7 @@ def _strip_quiz_answers(nodes: list[LearningItemTree]) -> None:
             for q in node.quiz_questions:
                 for opt in q.options:
                     opt.correct = False
+        node.oge_answer = None
         _strip_quiz_answers(node.children)
 
 
@@ -404,6 +407,23 @@ def submit_quiz_attempt(db: Session, item_id: int, user_id: int, answers: list[l
     return attempt
 
 
+def submit_oge_attempt(db: Session, item_id: int, user_id: int, answer: str) -> OgeAttempt:
+    item = db.query(LearningItem).filter(LearningItem.id == item_id).first()
+    if not item or item.type != LearningItemType.OGE_TASK:
+        raise HTTPException(status_code=404, detail="Задание ОГЭ не найдено")
+    expected = str((item.oge_answer or {}).get("answer", "")).strip().replace(",", ".")
+    actual = str(answer).strip().replace(",", ".")
+    attempt = OgeAttempt(
+        user_id=user_id, item_id=item_id, answer=str(answer),
+        score=100.0 if actual == expected else 0.0,
+    )
+    db.add(attempt)
+    db.commit()
+    db.refresh(attempt)
+    recompute_progress_for_oge_attempt(db, attempt)
+    return attempt
+
+
 def get_quiz_attempts(db: Session, item_id: int, user_id: int) -> list[QuizAttempt]:
     return (
         db.query(QuizAttempt)
@@ -427,6 +447,8 @@ def create_item(db: Session, course_id: int, payload: LearningItemCreate) -> Lea
         raise HTTPException(status_code=422, detail=f"Для элемента типа {item_type.value} нужен хотя бы один этап (steps)")
     if item_type == LearningItemType.QUIZ and not payload.quiz_questions:
         raise HTTPException(status_code=422, detail="Для элемента типа quiz нужен хотя бы один вопрос (quiz_questions)")
+    if item_type == LearningItemType.OGE_TASK and not (payload.oge_answer or "").strip():
+        raise HTTPException(status_code=422, detail="Для элемента типа oge_task нужен правильный ответ (oge_answer)")
 
     parent: Optional[LearningItem] = None
     if payload.parent_id is not None:
@@ -454,6 +476,7 @@ def create_item(db: Session, course_id: int, payload: LearningItemCreate) -> Lea
         problem_revision_id=payload.problem_revision_id,
         steps=[s.model_dump() for s in payload.steps] if payload.steps else None,
         quiz_questions=[q.model_dump() for q in payload.quiz_questions] if payload.quiz_questions else None,
+        oge_answer={"answer": payload.oge_answer.strip()} if payload.oge_answer is not None else None,
         due_at=payload.due_at,
         embed_editor=payload.embed_editor,
     )
@@ -490,6 +513,8 @@ def update_item(db: Session, item_id: int, payload: LearningItemUpdate) -> Learn
     item = _get_draft_item_or_404(db, item_id)
 
     updates = payload.model_dump(exclude_unset=True)
+    if "oge_answer" in updates and updates["oge_answer"] is not None:
+        updates["oge_answer"] = {"answer": updates["oge_answer"].strip()}
     if "parent_id" in updates:
         new_parent_id = updates["parent_id"]
         if new_parent_id == item_id:
@@ -660,6 +685,7 @@ async def publish_course(db: Session, course_id: int, actor_id: int | None) -> C
             is_archived=old.is_archived,
             steps=old.steps,
             quiz_questions=old.quiz_questions,
+            oge_answer=old.oge_answer,
             due_at=old.due_at,
             embed_editor=old.embed_editor,
             source_item_id=old.id,

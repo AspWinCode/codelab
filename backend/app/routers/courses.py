@@ -26,6 +26,7 @@ from app.schemas import (
     ProblemRevisionStudentOut,
     QuizAttemptCreate,
     QuizAttemptOut,
+    OgeAttemptCreate, OgeAttemptOut,
     RerunSubmissionsIn,
     RerunSubmissionsOut,
 )
@@ -110,6 +111,19 @@ def submit_quiz_attempt(
 @router.get("/quizzes/{item_id}/attempts", response_model=list[QuizAttemptOut])
 def my_quiz_attempts(item_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     return course_admin.get_quiz_attempts(db, item_id, user.id)
+
+
+@router.post("/oge/{item_id}/attempts", response_model=OgeAttemptOut)
+def submit_oge_attempt(item_id: int, payload: OgeAttemptCreate, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    return course_admin.submit_oge_attempt(db, item_id, user.id, payload.answer)
+
+
+@router.get("/oge/{item_id}/attempts", response_model=list[OgeAttemptOut])
+def my_oge_attempts(item_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    from app.models import OgeAttempt
+    return db.query(OgeAttempt).filter(
+        OgeAttempt.item_id == item_id, OgeAttempt.user_id == user.id
+    ).order_by(OgeAttempt.created_at.desc()).all()
 
 
 @router.post("/{course_id}/items", response_model=LearningItemOut)

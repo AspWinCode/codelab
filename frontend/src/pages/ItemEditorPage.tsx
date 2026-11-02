@@ -27,6 +27,7 @@ export default function ItemEditorPage() {
   const [item, setItem] = useState<LearningItem | null>(null);
   const [title, setTitle] = useState('');
   const [content, setContent] = useState('');
+  const [ogeAnswer, setOgeAnswer] = useState('');
   const [mode, setMode] = useState<'edit' | 'preview'>('edit');
   const [status, setStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
   const [uploadError, setUploadError] = useState('');
@@ -39,6 +40,7 @@ export default function ItemEditorPage() {
       setItem(i);
       setTitle(i.title);
       setContent(i.content || '');
+      setOgeAnswer(i.oge_answer?.answer || '');
     }).catch((e: any) => setLoadError(e.message || 'Не удалось загрузить элемент'));
   }, [itemId]);
 
@@ -46,7 +48,7 @@ export default function ItemEditorPage() {
     if (!item || !dirtyRef.current) return;
     setStatus('saving');
     try {
-      await api.updateItem(item.id, { title, content });
+      await api.updateItem(item.id, { title, content, ...(item.type === 'oge_task' ? { oge_answer: ogeAnswer } : {}) });
       dirtyRef.current = false;
       setStatus('saved');
     } catch {
@@ -160,6 +162,17 @@ export default function ItemEditorPage() {
           onBlur={save}
           sx={{ mb: 2 }}
         />
+
+        {item.type === 'oge_task' && (
+          <TextField
+            label="Правильный ответ"
+            helperText="Число, которое будет проверяться без показа ученику. Допускается точка или запятая."
+            value={ogeAnswer}
+            onChange={(e) => { setOgeAnswer(e.target.value); markDirty(); }}
+            onBlur={save}
+            sx={{ mb: 2 }}
+          />
+        )}
 
         <Stack direction="row" spacing={1.5} alignItems="center" flexWrap="wrap" useFlexGap sx={{ mb: 2 }}>
           <ToggleButtonGroup size="small" exclusive value={mode} onChange={(_, v) => v && setMode(v)}>

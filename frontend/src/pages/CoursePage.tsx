@@ -5,7 +5,7 @@ import {
 } from '@mui/material';
 import { SyntheticEvent, useCallback, useEffect, useRef, useState } from 'react';
 import { useParams, useSearchParams } from 'react-router-dom';
-import { api, LearningItemTree, ProblemForStudent, ProjectSubmission, QuizAttempt, RunResult, Submission } from '../api';
+import { api, LearningItemTree, OgeAttempt, ProblemForStudent, ProjectSubmission, QuizAttempt, RunResult, Submission } from '../api';
 import CodeEditor from '../components/CodeEditor';
 import Layout from '../components/Layout';
 import { FONT_CODE } from '../theme';
@@ -31,6 +31,7 @@ const DRAWER_WIDTH = 300;
 const TYPE_LABEL: Record<string, string> = {
   theory: 'Теория', video: 'Видео', file: 'Файл', link: 'Ссылка',
   quiz: 'Тест', task: 'Задача', manual: 'Ручное задание', checkpoint: 'Контрольная точка',
+  oge_task: 'Задание ОГЭ',
   snap_task: 'Задание Snap!', gdevelop_task: 'Задание GDevelop', turtle_task: 'Задание Черепашка', project: 'Проект',
 };
 
@@ -644,6 +645,51 @@ function QuizView({ item, onSubmitted }: { item: LearningItemTree; onSubmitted: 
   );
 }
 
+function OgeTaskView({ item, onSubmitted }: { item: LearningItemTree; onSubmitted: () => void }) {
+  const [answer, setAnswer] = useState('');
+  const [result, setResult] = useState<OgeAttempt | null>(null);
+  const [lastAttempt, setLastAttempt] = useState<OgeAttempt | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    api.myOgeAttempts(item.id).then((items) => setLastAttempt(items[0] || null)).catch(() => {});
+  }, [item.id]);
+
+  const submit = async () => {
+    if (!answer.trim()) return;
+    setSubmitting(true);
+    setError('');
+    try {
+      const attempt = await api.submitOgeAttempt(item.id, answer);
+      setResult(attempt);
+      setLastAttempt(attempt);
+      onSubmitted();
+    } catch (e: any) {
+      setError(e.message);
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <Container maxWidth="md" sx={{ py: 4 }}>
+      <Box className="oge-task-card">
+        <Typography variant="h2" sx={{ mb: 2 }}>Задача №{item.position + 1}</Typography>
+        <Box className="preview oge-task-statement" dangerouslySetInnerHTML={{ __html: renderContentHtml(item.content || item.description || '') }} />
+        {error && <Alert severity="error" sx={{ mt: 2 }}>{error}</Alert>}
+        {result && <Alert severity={result.score === 100 ? 'success' : 'error'} sx={{ mt: 2 }}>{result.score === 100 ? 'Ответ верный' : 'Ответ неверный. Попробуйте ещё раз.'}</Alert>}
+        {!result && lastAttempt && <Typography variant="body2" color="text.secondary" sx={{ mt: 2 }}>Последняя попытка: {lastAttempt.score === 100 ? 'верно' : 'неверно'}</Typography>}
+        <Paper className="oge-answer-panel" elevation={0}>
+          <Typography sx={{ mr: 1 }}>Ответ:</Typography>
+          <TextField size="small" value={answer} onChange={(e) => setAnswer(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') submit(); }} inputProps={{ inputMode: 'decimal', 'aria-label': 'Ответ' }} />
+          <Button variant="contained" onClick={submit} disabled={submitting || !answer.trim()} sx={{ ml: 1 }}>Проверить</Button>
+        </Paper>
+      </Box>
+    </Container>
+  );
+}
+
 function flatten(items: LearningItemTree[]): LearningItemTree[] {
   return items.flatMap((i) => [i, ...flatten(i.children)]);
 }
@@ -1046,6 +1092,8 @@ export default function CoursePage() {
             />
           ) : selected && selected.type === 'project' && selected.embed_editor === 'turtle' ? (
             <TurtleProjectView key={selected.id} item={selected} />
+          ) : selected && selected.type === 'oge_task' ? (
+            <OgeTaskView key={selected.id} item={selected} onSubmitted={refreshTreeAndSelected} />
           ) : selected && selected.type === 'quiz' ? (
             <QuizView key={selected.id} item={selected} onSubmitted={refreshTreeAndSelected} />
           ) : (

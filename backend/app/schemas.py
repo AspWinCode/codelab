@@ -150,6 +150,19 @@ class QuizAttemptOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class OgeAttemptCreate(BaseModel):
+    answer: str
+
+
+class OgeAttemptOut(BaseModel):
+    id: int
+    item_id: int
+    score: float
+    created_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
 class LearningItemCreate(BaseModel):
     """LMS-001..004: элемент дерева курса. Для type="task" обязателен
     problem_revision_id — сама задача создаётся отдельно, POST /courses/{id}/tasks.
@@ -160,7 +173,7 @@ class LearningItemCreate(BaseModel):
     app/services/tree_rules.py); остальные типы — контент, может лежать на
     любом из этих уровней или в корне курса."""
 
-    type: str  # theory|video|file|link|quiz|task|manual|checkpoint|snap_task|project|module|submodule|topic|subtopic
+    type: str  # theory|video|file|link|quiz|oge_task|task|manual|checkpoint|snap_task|project|module|submodule|topic|subtopic
     title: str
     description: Optional[str] = None
     content: Optional[str] = None
@@ -172,6 +185,7 @@ class LearningItemCreate(BaseModel):
     problem_revision_id: Optional[int] = None
     steps: Optional[List[SnapStep]] = None
     quiz_questions: Optional[List[QuizQuestion]] = None
+    oge_answer: Optional[str] = None
     # Только для type="project" — срок сдачи (см. ProjectSubmission).
     due_at: Optional[datetime] = None
     # Только для type="project" — если "turtle", фронтенд показывает справа
@@ -190,6 +204,7 @@ class LearningItemUpdate(BaseModel):
     unlock_rules: Optional[dict] = None
     steps: Optional[List[SnapStep]] = None
     quiz_questions: Optional[List[QuizQuestion]] = None
+    oge_answer: Optional[str] = None
     due_at: Optional[datetime] = None
     embed_editor: Optional[str] = None
 
@@ -214,6 +229,7 @@ class LearningItemOut(BaseModel):
     # Отдельной "student"-схемы нет специально: тип элемента один и тот же
     # (LearningItemTree) что для методиста, что для ученика.
     quiz_questions: Optional[List[QuizQuestion]] = None
+    oge_answer: Optional[dict] = None
     due_at: Optional[datetime] = None
     embed_editor: Optional[str] = None
 

@@ -21,6 +21,7 @@ from app.models import (
     ProjectSubmissionStatus,
     Progress,
     QuizAttempt,
+    OgeAttempt,
     Submission,
     SubmissionStatus,
     Verdict,
@@ -103,6 +104,13 @@ def resolve_official_quiz_score(db: Session, user_id: int, item_id: int) -> Opti
     return best[0] if best else None
 
 
+def resolve_official_oge_score(db: Session, user_id: int, item_id: int) -> Optional[float]:
+    best = db.query(OgeAttempt.score).filter(
+        OgeAttempt.user_id == user_id, OgeAttempt.item_id == item_id
+    ).order_by(OgeAttempt.score.desc()).first()
+    return best[0] if best else None
+
+
 def _latest_project_submission(db: Session, user_id: int, item_id: int) -> Optional[ProjectSubmission]:
     """"На доработку" заводит новую попытку (attempt_number+1), старая
     остаётся в истории (см. app/services/project_admin.py) — для прогресса
@@ -120,6 +128,8 @@ def _resolve_official_item_score(db: Session, user_id: int, item: LearningItem) 
         return resolve_official_score(db, user_id, item.problem_revision_id)
     if item.type == LearningItemType.QUIZ:
         return resolve_official_quiz_score(db, user_id, item.id)
+    if item.type == LearningItemType.OGE_TASK:
+        return resolve_official_oge_score(db, user_id, item.id)
     if item.type == LearningItemType.PROJECT:
         submission = _latest_project_submission(db, user_id, item.id)
         if not submission or submission.status != ProjectSubmissionStatus.ACCEPTED:
@@ -259,6 +269,19 @@ def _recompute_course_progress(db: Session, enrollment: Enrollment) -> None:
     progress.total_items = total
     progress.percent = round(100 * completed / total, 2) if total else 0.0
     progress.points = int(points)
+    db.commit()
+
+
+def recompute_progress_for_oge_attempt(db: Session, attempt: OgeAttempt) -> None:
+    item = db.query(LearningItem).filter(LearningItem.id == attempt.item_id).first()
+    if not item:
+        return
+    enrollments = db.query(Enrollment).filter(
+        Enrollment.user_id == attempt.user_id,
+        Enrollment.course_version_id == item.course_version_id,
+    ).all()
+    for enrollment in enrollments:
+        enrollment.last_item_id = item.id
     db.commit()
 
 

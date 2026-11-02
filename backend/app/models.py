@@ -42,6 +42,7 @@ class LearningItemType(str, enum.Enum):
     FILE = "file"
     LINK = "link"
     QUIZ = "quiz"
+    OGE_TASK = "oge_task"
     TASK = "task"
     MANUAL = "manual"
     CHECKPOINT = "checkpoint"
@@ -232,6 +233,7 @@ class LearningItem(Base):
     # на элементе, не в отдельном банке — переиспользование между тестами не
     # нужно (решение владельца продукта 2026-09-23).
     quiz_questions = Column(JSON, nullable=True)
+    oge_answer = Column(JSON, nullable=True)
     # Архивация каскадится на все дочерние узлы в момент действия (см.
     # app/services/tree_rules.py: set_item_archived) — простой флаг, не
     # "скрыт, если у предка is_archived", чтобы не пересчитывать видимость
@@ -401,6 +403,17 @@ class QuizAttempt(Base):
     # порядок соответствует item.quiz_questions на момент попытки.
     answers = Column(JSON, nullable=False)
     score = Column(Float, nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class OgeAttempt(Base):
+    __tablename__ = "oge_attempts"
+
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    item_id = Column(Integer, ForeignKey("learning_items.id"), nullable=False, index=True)
+    answer = Column(String(255), nullable=False)
+    score = Column(Float, nullable=False, default=0)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     user = relationship("User")

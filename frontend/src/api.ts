@@ -82,6 +82,13 @@ export interface QuizAttempt {
   created_at: string;
 }
 
+export interface OgeAttempt {
+  id: number;
+  item_id: number;
+  score: number;
+  created_at: string;
+}
+
 export interface LearningItem {
   id: number;
   type: string;
@@ -96,6 +103,7 @@ export interface LearningItem {
   problem_revision_id: number | null;
   steps: SnapStep[] | null;
   quiz_questions: QuizQuestion[] | null;
+  oge_answer?: { answer: string } | null;
   due_at: string | null;
   // Для type="project": если "turtle" — справа показывается iframe
   // редактора черепашки вместо формы ручной загрузки файла.
@@ -241,7 +249,7 @@ export const api = {
   completeItem: (courseId: number, itemId: number) =>
     request(`/courses/${courseId}/items/${itemId}/complete`, { method: 'PUT' }),
   getItem: (id: number) => request<LearningItem>(`/courses/items/${id}`),
-  updateItem: (id: number, patch: Partial<Pick<LearningItem, 'title' | 'content' | 'description'>>) =>
+  updateItem: (id: number, patch: Partial<Pick<LearningItem, 'title' | 'content' | 'description'>> & { oge_answer?: string }) =>
     request<LearningItem>(`/courses/items/${id}`, { method: 'PUT', body: JSON.stringify(patch) }),
   mySubmissions: (problemRevisionId: number) =>
     request<Submission[]>(`/submissions?problem_revision_id=${problemRevisionId}`),
@@ -256,6 +264,9 @@ export const api = {
   submitQuizAttempt: (itemId: number, answers: number[][]) =>
     request<QuizAttempt>(`/courses/quizzes/${itemId}/attempts`, { method: 'POST', body: JSON.stringify({ answers }) }),
   myQuizAttempts: (itemId: number) => request<QuizAttempt[]>(`/courses/quizzes/${itemId}/attempts`),
+  submitOgeAttempt: (itemId: number, answer: string) =>
+    request<OgeAttempt>(`/courses/oge/${itemId}/attempts`, { method: 'POST', body: JSON.stringify({ answer }) }),
+  myOgeAttempts: (itemId: number) => request<OgeAttempt[]>(`/courses/oge/${itemId}/attempts`),
   upload: async (file: File): Promise<UploadResult> => {
     const form = new FormData();
     form.append('file', file);
