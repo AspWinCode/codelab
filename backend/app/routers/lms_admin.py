@@ -146,7 +146,7 @@ def get_task(problem_revision_id: int, db: Session = Depends(get_db), staff: Use
 
 
 @router.put("/tasks/{problem_revision_id}", response_model=ProblemRevisionOut)
-def update_task(
+async def update_task(
     problem_revision_id: int,
     payload: ProblemRevisionCreate,
     db: Session = Depends(get_db),
@@ -157,22 +157,27 @@ def update_task(
     перепроверка) после этого перепроверяет их по исправленным тестам."""
     course_admin.get_task_or_404(db, problem_revision_id)
     _ensure_task_owner(db, problem_revision_id, staff)
-    return course_admin.update_task(db, problem_revision_id, payload)
+    result = course_admin.update_task(db, problem_revision_id, payload)
+    course = course_admin.get_course_for_task(db, problem_revision_id)
+    if course:
+        await course_admin.publish_course(db, course.id, actor_id=staff.id)
+    return result
 
 
 @router.post("/courses/{course_id}/items", response_model=LearningItemOut)
-def create_item(
+async def create_item(
     course_id: int,
     payload: LearningItemCreate,
     db: Session = Depends(get_db),
     staff: User = Depends(resolve_staff_user),
 ):
     course_admin.ensure_course_owner(course_admin.get_course_or_404(db, course_id), staff)
-    return course_admin.create_item(db, course_id, payload)
+    result = course_admin.create_item(db, course_id, payload)
+    return await course_admin.auto_publish_item(db, course_id, result.id, actor_id=staff.id)
 
 
 @router.put("/items/{item_id}", response_model=LearningItemOut)
-def update_item(
+async def update_item(
     item_id: int,
     payload: LearningItemUpdate,
     db: Session = Depends(get_db),
@@ -180,19 +185,21 @@ def update_item(
 ):
     _, course = course_admin.get_course_for_item(db, item_id)
     course_admin.ensure_course_owner(course, staff)
-    return course_admin.update_item(db, item_id, payload)
+    result = course_admin.update_item(db, item_id, payload)
+    return await course_admin.auto_publish_item(db, course.id, result.id, actor_id=staff.id)
 
 
 @router.delete("/items/{item_id}")
-def delete_item(item_id: int, db: Session = Depends(get_db), staff: User = Depends(resolve_staff_user)):
+async def delete_item(item_id: int, db: Session = Depends(get_db), staff: User = Depends(resolve_staff_user)):
     _, course = course_admin.get_course_for_item(db, item_id)
     course_admin.ensure_course_owner(course, staff)
     course_admin.delete_item(db, item_id)
+    await course_admin.publish_course(db, course.id, actor_id=staff.id)
     return {"ok": True}
 
 
 @router.put("/items/{item_id}/archive", response_model=LearningItemOut)
-def archive_item(
+async def archive_item(
     item_id: int,
     payload: LearningItemArchiveIn,
     db: Session = Depends(get_db),
@@ -202,7 +209,8 @@ def archive_item(
     course_admin.set_item_archived."""
     _, course = course_admin.get_course_for_item(db, item_id)
     course_admin.ensure_course_owner(course, staff)
-    return course_admin.set_item_archived(db, item_id, payload.archived)
+    result = course_admin.set_item_archived(db, item_id, payload.archived)
+    return await course_admin.auto_publish_item(db, course.id, result.id, actor_id=staff.id)
 
 
 @router.get("/courses/{course_id}/tree", response_model=list[LearningItemTree])

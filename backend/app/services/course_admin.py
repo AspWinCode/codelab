@@ -707,6 +707,20 @@ async def publish_course(db: Session, course_id: int, actor_id: int | None) -> C
     return course
 
 
+async def auto_publish_item(db: Session, course_id: int, item_id: int, actor_id: int | None) -> LearningItem:
+    """Публикует изменение элемента и возвращает его новый ID в открытом
+    черновике. Это сохраняет контракт конструктора: следующий запрос может
+    использовать parent_id из ответа, несмотря на клонирование версий."""
+    await publish_course(db, course_id, actor_id=actor_id)
+    draft = get_draft_version(db, course_id)
+    clone = (
+        db.query(LearningItem)
+        .filter(LearningItem.course_version_id == draft.id, LearningItem.source_item_id == item_id)
+        .first()
+    )
+    return clone or db.query(LearningItem).filter(LearningItem.id == item_id).first()
+
+
 def rerun_submissions(db: Session, course_id: int, submission_ids: list[int]) -> int:
     """TASK-007: массовая перепроверка после исправления тестов задачи.
     Учитываются только посылки, чьи задачи реально принадлежат этому курсу
