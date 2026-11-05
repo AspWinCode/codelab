@@ -672,17 +672,23 @@ function OgeTaskView({ item, onSubmitted }: { item: LearningItemTree; onSubmitte
     }
   };
 
+  const statement = item.content || item.description || '';
+  const statementIsHtml = /<\/?[a-z][\s\S]*>/i.test(statement);
+
   return (
     <Container maxWidth="md" sx={{ py: 4 }}>
       <Box className="oge-task-card">
         <Typography variant="h2" sx={{ mb: 2 }}>Задача №{item.position + 1}</Typography>
-        <Typography
-          component="div"
-          className="oge-task-statement"
-          sx={{ whiteSpace: 'pre-wrap' }}
-        >
-          {item.content || item.description || ''}
-        </Typography>
+        {statementIsHtml ? (
+          <Box
+            className="preview oge-task-statement"
+            dangerouslySetInnerHTML={{ __html: renderContentHtml(statement) }}
+          />
+        ) : (
+          <Typography component="div" className="oge-task-statement" sx={{ whiteSpace: 'pre-wrap' }}>
+            {statement}
+          </Typography>
+        )}
         {error && <Alert severity="error" sx={{ mt: 2 }}>{error}</Alert>}
         {result && <Alert severity={result.score === 100 ? 'success' : 'error'} sx={{ mt: 2 }}>{result.score === 100 ? 'Ответ верный' : 'Ответ неверный. Попробуйте ещё раз.'}</Alert>}
         {!result && lastAttempt && <Typography variant="body2" color="text.secondary" sx={{ mt: 2 }}>Последняя попытка: {lastAttempt.score === 100 ? 'верно' : 'неверно'}</Typography>}
