@@ -66,6 +66,19 @@ class Settings(BaseSettings):
         limit = self.upload_max_project_file_mb * 1024 * 1024
         return {ext.strip().lower(): limit for ext in self.upload_allowed_project_ext.split(",") if ext.strip()}
 
+    # Файл к попытке ОГЭ (например, фото решения на бумаге) — отдельная
+    # приватная директория и allowlist: в отличие от project'ов это не
+    # исходный код, а фото/сканы, и этот файл ни на что не влияет (не
+    # проверяется), см. services/oge_files.py.
+    oge_uploads_dir: str = "uploads_private/oge"
+    upload_max_oge_file_mb: int = 10
+    upload_allowed_oge_ext: str = "jpg,jpeg,png,webp,pdf"
+
+    @property
+    def upload_allowed_oge_extensions(self) -> dict[str, int]:
+        limit = self.upload_max_oge_file_mb * 1024 * 1024
+        return {ext.strip().lower(): limit for ext in self.upload_allowed_oge_ext.split(",") if ext.strip()}
+
     @property
     def upload_allowed_extensions(self) -> dict[str, int]:
         """Расширение (без точки, lowercase) → лимит размера в байтах."""

@@ -414,6 +414,14 @@ class OgeAttempt(Base):
     item_id = Column(Integer, ForeignKey("learning_items.id"), nullable=False, index=True)
     answer = Column(String(255), nullable=False)
     score = Column(Float, nullable=False, default=0)
+    # Необязательный файл (например, фото решения на бумаге) — только в
+    # дополнение к числовому ответу, который проверяется автоматически;
+    # сам файл ни на что не влияет и не проверяется. Хранилище общее с
+    # ProjectFile (services/project_files.py) — тот же приватный каталог.
+    file_stored_name = Column(String(64), nullable=True)
+    file_original_filename = Column(String(255), nullable=True)
+    file_content_type = Column(String(128), nullable=True)
+    file_size = Column(Integer, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     user = relationship("User")

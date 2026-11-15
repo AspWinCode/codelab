@@ -150,15 +150,13 @@ class QuizAttemptOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
-class OgeAttemptCreate(BaseModel):
-    answer: str
-
-
 class OgeAttemptOut(BaseModel):
     id: int
     item_id: int
     score: float
     created_at: datetime
+    file_original_filename: Optional[str] = None
+    file_size: Optional[int] = None
 
     model_config = ConfigDict(from_attributes=True)
 

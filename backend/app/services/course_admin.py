@@ -48,6 +48,7 @@ from app.services.progress_calc import (
     recompute_progress_for_quiz_attempt,
     recompute_progress_for_oge_attempt,
 )
+from app.services.project_files import SavedProjectFile  # общий тип "сохранённый файл"
 from app.services.tree_rules import validate_parent
 
 
@@ -407,7 +408,14 @@ def submit_quiz_attempt(db: Session, item_id: int, user_id: int, answers: list[l
     return attempt
 
 
-def submit_oge_attempt(db: Session, item_id: int, user_id: int, answer: str) -> OgeAttempt:
+def submit_oge_attempt(
+    db: Session,
+    item_id: int,
+    user_id: int,
+    answer: str,
+    file: Optional[SavedProjectFile] = None,
+    file_original_filename: Optional[str] = None,
+) -> OgeAttempt:
     item = db.query(LearningItem).filter(LearningItem.id == item_id).first()
     if not item or item.type != LearningItemType.OGE_TASK:
         raise HTTPException(status_code=404, detail="Задание ОГЭ не найдено")
@@ -416,6 +424,10 @@ def submit_oge_attempt(db: Session, item_id: int, user_id: int, answer: str) -> 
     attempt = OgeAttempt(
         user_id=user_id, item_id=item_id, answer=str(answer),
         score=100.0 if actual == expected else 0.0,
+        file_stored_name=file.stored_name if file else None,
+        file_original_filename=file_original_filename if file else None,
+        file_content_type=file.content_type if file else None,
+        file_size=file.size if file else None,
     )
     db.add(attempt)
     db.commit()

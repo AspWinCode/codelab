@@ -1,4 +1,4 @@
-import { CheckCircle, CloseFullscreen, ContentCopy, ExpandLess, ExpandMore, FolderOutlined, Lock, OpenInFull, RadioButtonUnchecked } from '@mui/icons-material';
+import { AttachFile, CheckCircle, CloseFullscreen, ContentCopy, ExpandLess, ExpandMore, FolderOutlined, Lock, OpenInFull, RadioButtonUnchecked } from '@mui/icons-material';
 import {
   Alert, Box, Button, Checkbox, Chip, Container, Divider, Drawer, FormControlLabel,
   FormGroup, IconButton, List, ListItem, ListItemButton, ListItemIcon, ListItemText, Paper, Stack, TextField, Tooltip, Typography,
@@ -647,6 +647,7 @@ function QuizView({ item, onSubmitted }: { item: LearningItemTree; onSubmitted: 
 
 function OgeTaskView({ item, onSubmitted }: { item: LearningItemTree; onSubmitted: () => void }) {
   const [answer, setAnswer] = useState('');
+  const [file, setFile] = useState<File | null>(null);
   const [result, setResult] = useState<OgeAttempt | null>(null);
   const [lastAttempt, setLastAttempt] = useState<OgeAttempt | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -661,9 +662,10 @@ function OgeTaskView({ item, onSubmitted }: { item: LearningItemTree; onSubmitte
     setSubmitting(true);
     setError('');
     try {
-      const attempt = await api.submitOgeAttempt(item.id, answer);
+      const attempt = await api.submitOgeAttempt(item.id, answer, file);
       setResult(attempt);
       setLastAttempt(attempt);
+      setFile(null);
       onSubmitted();
     } catch (e: any) {
       setError(e.message);
@@ -692,11 +694,32 @@ function OgeTaskView({ item, onSubmitted }: { item: LearningItemTree; onSubmitte
         {error && <Alert severity="error" sx={{ mt: 2 }}>{error}</Alert>}
         {result && <Alert severity={result.score === 100 ? 'success' : 'error'} sx={{ mt: 2 }}>{result.score === 100 ? 'Ответ верный' : 'Ответ неверный. Попробуйте ещё раз.'}</Alert>}
         {!result && lastAttempt && <Typography variant="body2" color="text.secondary" sx={{ mt: 2 }}>Последняя попытка: {lastAttempt.score === 100 ? 'верно' : 'неверно'}</Typography>}
+        {!result && lastAttempt?.file_original_filename && (
+          <Typography variant="body2" sx={{ mt: 0.5 }}>
+            Прикреплённый файл:{' '}
+            <a href={api.ogeAttemptFileUrl(lastAttempt.id)} target="_blank" rel="noreferrer">{lastAttempt.file_original_filename}</a>
+          </Typography>
+        )}
         <Paper className="oge-answer-panel" elevation={0}>
           <Typography sx={{ mr: 1 }}>Ответ:</Typography>
           <TextField size="small" value={answer} onChange={(e) => setAnswer(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') submit(); }} inputProps={{ inputMode: 'decimal', 'aria-label': 'Ответ' }} />
           <Button variant="contained" onClick={submit} disabled={submitting || !answer.trim()} sx={{ ml: 1 }}>Проверить</Button>
         </Paper>
+        <Stack direction="row" spacing={1} alignItems="center" sx={{ mt: 1.5 }}>
+          <Button component="label" size="small" variant="outlined" startIcon={<AttachFile fontSize="small" />}>
+            {file ? 'Заменить файл' : 'Прикрепить файл'}
+            <input type="file" hidden onChange={(e) => setFile(e.target.files?.[0] || null)} />
+          </Button>
+          {file && (
+            <>
+              <Typography variant="body2" color="text.secondary">{file.name}</Typography>
+              <Button size="small" onClick={() => setFile(null)}>Убрать</Button>
+            </>
+          )}
+        </Stack>
+        <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.5 }}>
+          Файл необязателен и не проверяется автоматически — например, фото решения на бумаге (jpg, png, webp, pdf).
+        </Typography>
       </Box>
     </Container>
   );

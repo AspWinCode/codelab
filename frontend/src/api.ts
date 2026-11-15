@@ -87,6 +87,8 @@ export interface OgeAttempt {
   item_id: number;
   score: number;
   created_at: string;
+  file_original_filename: string | null;
+  file_size: number | null;
 }
 
 export interface LearningItem {
@@ -264,9 +266,19 @@ export const api = {
   submitQuizAttempt: (itemId: number, answers: number[][]) =>
     request<QuizAttempt>(`/courses/quizzes/${itemId}/attempts`, { method: 'POST', body: JSON.stringify({ answers }) }),
   myQuizAttempts: (itemId: number) => request<QuizAttempt[]>(`/courses/quizzes/${itemId}/attempts`),
-  submitOgeAttempt: (itemId: number, answer: string) =>
-    request<OgeAttempt>(`/courses/oge/${itemId}/attempts`, { method: 'POST', body: JSON.stringify({ answer }) }),
+  submitOgeAttempt: async (itemId: number, answer: string, file?: File | null): Promise<OgeAttempt> => {
+    const form = new FormData();
+    form.append('answer', answer);
+    if (file) form.append('file', file);
+    const res = await fetch(`${BASE}/courses/oge/${itemId}/attempts`, { method: 'POST', credentials: 'include', body: form });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      throw new Error(body.detail || `Ошибка ${res.status}`);
+    }
+    return res.json();
+  },
   myOgeAttempts: (itemId: number) => request<OgeAttempt[]>(`/courses/oge/${itemId}/attempts`),
+  ogeAttemptFileUrl: (attemptId: number) => `${BASE}/courses/oge/attempts/${attemptId}/file`,
   upload: async (file: File): Promise<UploadResult> => {
     const form = new FormData();
     form.append('file', file);

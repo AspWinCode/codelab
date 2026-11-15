@@ -4,12 +4,13 @@
 «Интеграция с порталом»). Эндпоинты здесь оставлены как рабочий низкоуровневый
 путь для локальной отладки Codelab без портала и как основа, которую
 переиспользует app/services/course_admin.py."""
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, File as FastAPIFile, Form, HTTPException, UploadFile
+from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.deps import get_current_user, require_role
-from app.models import Course, CourseStatus, Enrollment, EnrollmentStatus, LearningItem, User
+from app.models import Course, CourseStatus, Enrollment, EnrollmentStatus, LearningItem, OgeAttempt, User
 from app.schemas import (
     CourseArchiveIn,
     CourseCreate,
@@ -26,11 +27,12 @@ from app.schemas import (
     ProblemRevisionStudentOut,
     QuizAttemptCreate,
     QuizAttemptOut,
-    OgeAttemptCreate, OgeAttemptOut,
+    OgeAttemptOut,
     RerunSubmissionsIn,
     RerunSubmissionsOut,
 )
 from app.services import course_admin
+from app.services.oge_files import oge_file_path, save_oge_file
 
 router = APIRouter()
 
@@ -118,16 +120,39 @@ def my_quiz_attempts(item_id: int, db: Session = Depends(get_db), user: User = D
 
 
 @router.post("/oge/{item_id}/attempts", response_model=OgeAttemptOut)
-def submit_oge_attempt(item_id: int, payload: OgeAttemptCreate, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
-    return course_admin.submit_oge_attempt(db, item_id, user.id, payload.answer)
+async def submit_oge_attempt(
+    item_id: int,
+    answer: str = Form(...),
+    file: UploadFile | None = FastAPIFile(None),
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """Файл — необязательное приложение к автоответу (например, фото решения
+    на бумаге), сам он не проверяется и не влияет на score (см. models.py::OgeAttempt)."""
+    saved = await save_oge_file(file.filename or "", file.content_type or "", file.read) if file else None
+    return course_admin.submit_oge_attempt(db, item_id, user.id, answer, file=saved, file_original_filename=file.filename if file else None)
 
 
 @router.get("/oge/{item_id}/attempts", response_model=list[OgeAttemptOut])
 def my_oge_attempts(item_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
-    from app.models import OgeAttempt
     return db.query(OgeAttempt).filter(
         OgeAttempt.item_id == item_id, OgeAttempt.user_id == user.id
     ).order_by(OgeAttempt.created_at.desc()).all()
+
+
+@router.get("/oge/attempts/{attempt_id}/file")
+def download_oge_attempt_file(attempt_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    attempt = db.query(OgeAttempt).filter(OgeAttempt.id == attempt_id).first()
+    if not attempt or not attempt.file_stored_name:
+        raise HTTPException(status_code=404, detail="Файл не найден")
+    is_owner = attempt.user_id == user.id
+    is_staff = user.role in ("teacher", "methodist", "admin")
+    if not is_owner and not is_staff:
+        raise HTTPException(status_code=403, detail="Недостаточно прав")
+    path = oge_file_path(attempt.file_stored_name)
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="Файл не найден на диске")
+    return FileResponse(path, media_type=attempt.file_content_type or "application/octet-stream", filename=attempt.file_original_filename or "file")
 
 
 @router.post("/{course_id}/items", response_model=LearningItemOut)
