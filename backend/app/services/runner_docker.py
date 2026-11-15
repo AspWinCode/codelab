@@ -42,6 +42,18 @@ from app.services.environments import Environment, get_environment
 # лимита времени самого решения, только защита от зависшего docker run.
 STARTUP_GRACE_SECONDS = 5
 
+# Сколько поток запроса готов ждать свободный слот _CONCURRENCY_GATE, прежде
+# чем сдаться (инцидент 15.11.2026: при массовом "Запустить" у целого класса
+# запросы сверх runner_max_concurrent ждали слот БЕЗ ограничения по времени,
+# удерживая поток общего threadpool процесса — это выедало пул потоков и
+# валило 504 даже несвязанные запросы). Лучше быстро и понятно сказать
+# ученику "подожди и повтори", чем зависнуть насмерть.
+GATE_WAIT_TIMEOUT_SECONDS = 20
+
+
+class RunnerBusyError(RuntimeError):
+    """Не удалось дождаться свободного слота песочницы за GATE_WAIT_TIMEOUT_SECONDS."""
+
 # Ровно то, что показываем ученику/преподавателю.
 OUTPUT_DISPLAY_LIMIT = 20_000
 # JDG-002: решение пишет в stdout/stderr без ограничения по памяти самого
@@ -147,9 +159,15 @@ def run_sandboxed(
         args = _build_docker_args(container_name, environment, str(code_path), memory_limit_mb, extra_mounts)
 
         # Ждём свободный слот ДО запуска контейнера — семафор ограничивает
-        # именно число одновременно работающих контейнеров, а не ждущих
-        # своей очереди запросов (тех может быть сколько угодно).
-        with _CONCURRENCY_GATE:
+        # именно число одновременно работающих контейнеров. Ждём не дольше
+        # GATE_WAIT_TIMEOUT_SECONDS (см. комментарий у константы) — дальше
+        # сдаёмся с понятной ошибкой, а не виснем.
+        if not _CONCURRENCY_GATE.acquire(timeout=GATE_WAIT_TIMEOUT_SECONDS):
+            raise RunnerBusyError(
+                "Сейчас слишком много одновременных запусков кода — подождите "
+                "несколько секунд и попробуйте снова."
+            )
+        try:
             try:
                 proc = subprocess.Popen(
                     args,
@@ -195,5 +213,7 @@ def run_sandboxed(
             for t in readers:
                 t.join(timeout=10)
             proc.wait(timeout=10)
+        finally:
+            _CONCURRENCY_GATE.release()
 
         return RunResult(stdout=result.get("stdout", ""), stderr=result.get("stderr", ""), timed_out=timed_out)

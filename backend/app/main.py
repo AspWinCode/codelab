@@ -1,5 +1,6 @@
 import os
 
+import anyio
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -8,6 +9,22 @@ from app.config import settings
 from app.routers import auth, courses, dashboard, lms_admin, lms_integration, notifications, projects, submissions, uploads
 
 app = FastAPI(title="Codelab API", version="0.1.0")
+
+
+@app.on_event("startup")
+async def _raise_sync_threadpool_limit() -> None:
+    # Почти все роуты — синхронные def (БД-запросы, сохранение черновика,
+    # статус посылки и т.д.) и выполняются в общем anyio-threadpool процесса
+    # (по умолчанию 40 потоков) — POST /submissions/run тоже синхронный и
+    # блокирует свой поток на время прогона Docker-контейнера (секунды), в
+    # том числе пока ждёт свободный слот _CONCURRENCY_GATE в
+    # app/services/runner_docker.py. При одновременном "Запустить" у целого
+    # класса/группы на ОГЭ эти ожидающие потоки съедают весь пул, и ВСЕ
+    # остальные (несвязанные) запросы — логин, автосохранение, статус
+    # сдачи — зависают и падают по 504 у nginx (инцидент 15.11.2026).
+    # Поднимаем лимит с большим запасом, чтобы медленные /run не отнимали
+    # потоки у остальных эндпоинтов.
+    anyio.to_thread.current_default_thread_limiter().total_tokens = 200
 
 app.add_middleware(
     CORSMiddleware,

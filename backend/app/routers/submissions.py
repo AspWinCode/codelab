@@ -10,6 +10,7 @@ from app.schemas import DraftIn, DraftOut, ManualGradeIn, RunRequest, RunResult,
 from app.services.error_explain import explain_stderr_ru, explain_timeout_ru
 from app.services.progress_calc import apply_manual_grade
 from app.services.runner import run_for_problem
+from app.services.runner_docker import RunnerBusyError
 
 router = APIRouter()
 
@@ -64,7 +65,10 @@ def run_code(payload: RunRequest, db: Session = Depends(get_db), user: User = De
     # запросы (см. инцидент с 504 13.10.2026: QueuePool limit reached).
     db.close()
 
-    result = run_for_problem(problem, payload.code, payload.stdin)
+    try:
+        result = run_for_problem(problem, payload.code, payload.stdin)
+    except RunnerBusyError as e:
+        raise HTTPException(status_code=503, detail=str(e))
     result.error_explanation = explain_timeout_ru() if result.timed_out else explain_stderr_ru(result.stderr)
     return result
 
