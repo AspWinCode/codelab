@@ -234,6 +234,13 @@ class LearningItem(Base):
     # нужно (решение владельца продукта 2026-09-23).
     quiz_questions = Column(JSON, nullable=True)
     oge_answer = Column(JSON, nullable=True)
+    # Только для type=oge_task — лимит попыток и что показывать ученику
+    # после отправки (ТЗ п.16.9, Этап 3). null в oge_max_attempts = не
+    # ограничено, как max_attempts у ProblemRevision (GRD-001).
+    oge_max_attempts = Column(Integer, nullable=True)
+    oge_allow_retry_after_success = Column(Boolean, nullable=False, default=True)
+    oge_show_result_immediately = Column(Boolean, nullable=False, default=True)
+    oge_show_correct_answer = Column(Boolean, nullable=False, default=False)
     # Архивация каскадится на все дочерние узлы в момент действия (см.
     # app/services/tree_rules.py: set_item_archived) — простой флаг, не
     # "скрыт, если у предка is_archived", чтобы не пересчитывать видимость

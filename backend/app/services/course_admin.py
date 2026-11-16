@@ -42,6 +42,7 @@ from app.schemas import (
     SubmissionReviewOut,
 )
 from app.services.lms_client import notify_course_webhook
+from app.services.oge_checker import check_oge_answer
 from app.services.progress_calc import (
     is_item_passed,
     is_item_unlocked,
@@ -419,11 +420,26 @@ def submit_oge_attempt(
     item = db.query(LearningItem).filter(LearningItem.id == item_id).first()
     if not item or item.type != LearningItemType.OGE_TASK:
         raise HTTPException(status_code=404, detail="Задание ОГЭ не найдено")
-    expected = str((item.oge_answer or {}).get("answer", "")).strip().replace(",", ".")
-    actual = str(answer).strip().replace(",", ".")
+
+    # Этап 3 (ТЗ п.16.9) — лимит попыток и запрет повторной попытки после
+    # правильного ответа. Проверяем ДО создания новой попытки, иначе лимит
+    # можно обойти параллельными запросами на единицу (не критично здесь,
+    # т.к. ученик отправляет попытки последовательно через форму).
+    previous_attempts = (
+        db.query(OgeAttempt)
+        .filter(OgeAttempt.item_id == item_id, OgeAttempt.user_id == user_id)
+        .all()
+    )
+    already_solved = any(a.score >= 100.0 for a in previous_attempts)
+    if already_solved and not item.oge_allow_retry_after_success:
+        raise HTTPException(status_code=422, detail="Задание уже решено, повторная попытка недоступна.")
+    if item.oge_max_attempts is not None and len(previous_attempts) >= item.oge_max_attempts:
+        raise HTTPException(status_code=422, detail="Вы использовали все доступные попытки.")
+
+    is_correct = check_oge_answer(item.oge_answer or {}, str(answer))
     attempt = OgeAttempt(
         user_id=user_id, item_id=item_id, answer=str(answer),
-        score=100.0 if actual == expected else 0.0,
+        score=100.0 if is_correct else 0.0,
         file_stored_name=file.stored_name if file else None,
         file_original_filename=file_original_filename if file else None,
         file_content_type=file.content_type if file else None,
@@ -445,6 +461,29 @@ def get_quiz_attempts(db: Session, item_id: int, user_id: int) -> list[QuizAttem
     )
 
 
+def _oge_answer_text(oge_answer) -> str:
+    """Текст правильного ответа независимо от формата входа — старый
+    плоский str или новый OgeAnswerIn — только для проверки "не пусто"
+    при создании/правке элемента."""
+    if oge_answer is None:
+        return ""
+    if isinstance(oge_answer, str):
+        return oge_answer
+    return oge_answer.answer
+
+
+def _normalize_oge_answer(oge_answer) -> Optional[dict]:
+    """str на входе — старый плоский формат, сохраняем как раньше
+    ({"answer": ...}, без "checker" — старое поведение сравнения в
+    app/services/oge_checker.check_oge_answer). OgeAnswerIn — новый
+    гибкий чекер, сохраняем все его поля как есть (ТЗ п.16.9)."""
+    if oge_answer is None:
+        return None
+    if isinstance(oge_answer, str):
+        return {"answer": oge_answer.strip()}
+    return oge_answer.model_dump()
+
+
 def create_item(db: Session, course_id: int, payload: LearningItemCreate) -> LearningItem:
     version = get_draft_version(db, course_id)
 
@@ -459,7 +498,7 @@ def create_item(db: Session, course_id: int, payload: LearningItemCreate) -> Lea
         raise HTTPException(status_code=422, detail=f"Для элемента типа {item_type.value} нужен хотя бы один этап (steps)")
     if item_type == LearningItemType.QUIZ and not payload.quiz_questions:
         raise HTTPException(status_code=422, detail="Для элемента типа quiz нужен хотя бы один вопрос (quiz_questions)")
-    if item_type == LearningItemType.OGE_TASK and not (payload.oge_answer or "").strip():
+    if item_type == LearningItemType.OGE_TASK and not _oge_answer_text(payload.oge_answer).strip():
         raise HTTPException(status_code=422, detail="Для элемента типа oge_task нужен правильный ответ (oge_answer)")
 
     parent: Optional[LearningItem] = None
@@ -488,7 +527,11 @@ def create_item(db: Session, course_id: int, payload: LearningItemCreate) -> Lea
         problem_revision_id=payload.problem_revision_id,
         steps=[s.model_dump() for s in payload.steps] if payload.steps else None,
         quiz_questions=[q.model_dump() for q in payload.quiz_questions] if payload.quiz_questions else None,
-        oge_answer={"answer": payload.oge_answer.strip()} if payload.oge_answer is not None else None,
+        oge_answer=_normalize_oge_answer(payload.oge_answer),
+        oge_max_attempts=payload.oge_max_attempts,
+        oge_allow_retry_after_success=payload.oge_allow_retry_after_success,
+        oge_show_result_immediately=payload.oge_show_result_immediately,
+        oge_show_correct_answer=payload.oge_show_correct_answer,
         due_at=payload.due_at,
         embed_editor=payload.embed_editor,
     )
@@ -526,7 +569,10 @@ def update_item(db: Session, item_id: int, payload: LearningItemUpdate) -> Learn
 
     updates = payload.model_dump(exclude_unset=True)
     if "oge_answer" in updates and updates["oge_answer"] is not None:
-        updates["oge_answer"] = {"answer": updates["oge_answer"].strip()}
+        raw = updates["oge_answer"]
+        # model_dump() уже развернул OgeAnswerIn в dict; str — старый плоский
+        # формат, оборачиваем как раньше (ТЗ п.16.9 — обратная совместимость).
+        updates["oge_answer"] = {"answer": raw.strip()} if isinstance(raw, str) else raw
     if "parent_id" in updates:
         new_parent_id = updates["parent_id"]
         if new_parent_id == item_id:
@@ -698,6 +744,10 @@ async def publish_course(db: Session, course_id: int, actor_id: int | None) -> C
             steps=old.steps,
             quiz_questions=old.quiz_questions,
             oge_answer=old.oge_answer,
+            oge_max_attempts=old.oge_max_attempts,
+            oge_allow_retry_after_success=old.oge_allow_retry_after_success,
+            oge_show_result_immediately=old.oge_show_result_immediately,
+            oge_show_correct_answer=old.oge_show_correct_answer,
             due_at=old.due_at,
             embed_editor=old.embed_editor,
             source_item_id=old.id,

@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import List, Optional
+from typing import List, Optional, Union
 
 from pydantic import BaseModel, ConfigDict, field_validator, model_validator
 
@@ -150,6 +150,27 @@ class QuizAttemptOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class OgeAnswerIn(BaseModel):
+    """Новый формат oge_answer (ТЗ п.16.9 — старый плоский текст ответа
+    продолжает работать через LearningItemCreate/Update.oge_answer: str,
+    см. ниже и app/services/oge_checker.py)."""
+
+    checker: str = "text"  # number|text|integer|decimal|boolean|custom
+    answer: str
+    accepted_answers: List[str] = []
+    case_sensitive: bool = False
+    ignore_spaces: bool = True
+    tolerance: Optional[float] = None
+
+    @field_validator("checker")
+    @classmethod
+    def _validate_checker(cls, v: str) -> str:
+        allowed = {"number", "text", "integer", "decimal", "boolean", "custom"}
+        if v not in allowed:
+            raise ValueError(f"Неизвестный тип проверки: {v}")
+        return v
+
+
 class OgeAttemptOut(BaseModel):
     id: int
     item_id: int
@@ -183,7 +204,16 @@ class LearningItemCreate(BaseModel):
     problem_revision_id: Optional[int] = None
     steps: Optional[List[SnapStep]] = None
     quiz_questions: Optional[List[QuizQuestion]] = None
-    oge_answer: Optional[str] = None
+    # str — старый плоский формат (обратная совместимость); OgeAnswerIn —
+    # новый гибкий чекер (ТЗ п.16.9, см. app/services/oge_checker.py).
+    oge_answer: Optional[Union[str, OgeAnswerIn]] = None
+    # Только для type="oge_task" — ограничение попыток и что показывать
+    # ученику после отправки (см. app/services/oge_checker.py — применяются
+    # в course_admin.submit_oge_attempt).
+    oge_max_attempts: Optional[int] = None  # null = не ограничено
+    oge_allow_retry_after_success: bool = True
+    oge_show_result_immediately: bool = True
+    oge_show_correct_answer: bool = False
     # Только для type="project" — срок сдачи (см. ProjectSubmission).
     due_at: Optional[datetime] = None
     # Только для type="project" — если "turtle", фронтенд показывает справа
@@ -202,7 +232,11 @@ class LearningItemUpdate(BaseModel):
     unlock_rules: Optional[dict] = None
     steps: Optional[List[SnapStep]] = None
     quiz_questions: Optional[List[QuizQuestion]] = None
-    oge_answer: Optional[str] = None
+    oge_answer: Optional[Union[str, OgeAnswerIn]] = None
+    oge_max_attempts: Optional[int] = None
+    oge_allow_retry_after_success: Optional[bool] = None
+    oge_show_result_immediately: Optional[bool] = None
+    oge_show_correct_answer: Optional[bool] = None
     due_at: Optional[datetime] = None
     embed_editor: Optional[str] = None
 
@@ -310,10 +344,49 @@ class TaskDifficultyOut(BaseModel):
     most_common_failure_verdict: Optional[str]
 
 
+class OgeTaskAnalyticsOut(BaseModel):
+    """ANA-001/002 для ОГЭ: статистика по одному заданию."""
+
+    item_id: int
+    title: str
+    module_title: Optional[str]
+    topic_title: Optional[str]
+    enrolled_count: int
+    students_attempted: int
+    correct_count: int
+    incorrect_count: int
+    correct_rate_percent: float
+    avg_attempts: Optional[float]
+    median_attempts: Optional[float]
+    students_not_attempted: int
+    avg_score: float
+    last_attempt_at: Optional[datetime]
+
+
+class OgeModuleStatsOut(BaseModel):
+    module_title: str
+    tasks_count: int
+    attempts_total: int
+    avg_correct_rate_percent: float
+
+
+class OgeOverviewOut(BaseModel):
+    total_tasks: int
+    solved_tasks: int
+    avg_correct_rate_percent: float
+    total_attempts: int
+    completion_percent: float
+    hardest_tasks: List[OgeTaskAnalyticsOut]
+    easiest_tasks: List[OgeTaskAnalyticsOut]
+    by_module: List[OgeModuleStatsOut]
+
+
 class CourseAnalyticsOut(BaseModel):
     generated_at: datetime  # ANA-005: дата актуальности метрик
     overview: CourseOverviewOut
     tasks: List[TaskDifficultyOut]
+    oge_overview: OgeOverviewOut
+    oge_tasks: List[OgeTaskAnalyticsOut]
 
 
 class SubmissionReviewOut(BaseModel):

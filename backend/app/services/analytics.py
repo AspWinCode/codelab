@@ -14,6 +14,7 @@ from app.models import (
     EnrollmentStatus,
     LearningItem,
     LearningItemType,
+    OgeAttempt,
     Progress,
     Submission,
     Verdict,
@@ -144,3 +145,148 @@ def task_difficulty(db: Session, course_id: int) -> list[dict]:
             "most_common_failure_verdict": most_common_failure,
         })
     return rows
+
+
+def _ancestor_title(by_id: dict[int, LearningItem], item_id: int, wanted_type: LearningItemType) -> Optional[str]:
+    """Ищет заголовок предка нужного типа, поднимаясь по parent_id. by_id —
+    все элементы активной версии курса, загруженные ОДНИМ запросом выше по
+    стеку (здесь никаких дополнительных запросов к базе)."""
+    node = by_id.get(item_id)
+    seen: set[int] = set()
+    while node and node.parent_id is not None and node.parent_id not in seen:
+        seen.add(node.parent_id)
+        node = by_id.get(node.parent_id)
+        if node and node.type == wanted_type:
+            return node.title
+    return None
+
+
+def oge_task_analytics(db: Session, course_id: int) -> list[dict]:
+    """ОГЭ-аналог task_difficulty: по каждому заданию ОГЭ — число
+    записанных/решавших/правильных/неправильных попыток, среднее и
+    медианное число попыток, дата последней попытки. Все попытки по всем
+    заданиям курса читаются ОДНИМ запросом (без N+1 по заданиям)."""
+    course = db.query(Course).filter(Course.id == course_id).first()
+    if not course:
+        raise HTTPException(status_code=404, detail="Курс не найден")
+    if not course.active_version_id:
+        return []
+
+    oge_items = (
+        db.query(LearningItem)
+        .filter(LearningItem.course_version_id == course.active_version_id, LearningItem.type == LearningItemType.OGE_TASK)
+        .order_by(LearningItem.position)
+        .all()
+    )
+    if not oge_items:
+        return []
+    item_ids = [i.id for i in oge_items]
+
+    all_items = (
+        db.query(LearningItem)
+        .filter(LearningItem.course_version_id == course.active_version_id)
+        .all()
+    )
+    by_id = {i.id: i for i in all_items}
+
+    enrolled_user_ids = {
+        e.user_id
+        for e in db.query(Enrollment).filter(Enrollment.course_id == course_id, Enrollment.status == EnrollmentStatus.ACTIVE)
+    }
+
+    attempts = (
+        db.query(OgeAttempt)
+        .filter(OgeAttempt.item_id.in_(item_ids))
+        .order_by(OgeAttempt.created_at)
+        .all()
+    )
+    attempts_by_item: dict[int, list[OgeAttempt]] = {}
+    for a in attempts:
+        attempts_by_item.setdefault(a.item_id, []).append(a)
+
+    rows = []
+    for item in oge_items:
+        item_attempts = attempts_by_item.get(item.id, [])
+        attempted_users = {a.user_id for a in item_attempts}
+        per_user_attempts: dict[int, int] = {}
+        last_attempt_at = None
+        score_sum = 0.0
+        correct_count = 0
+        for a in item_attempts:
+            per_user_attempts[a.user_id] = per_user_attempts.get(a.user_id, 0) + 1
+            score_sum += a.score
+            if a.score >= 100.0:
+                correct_count += 1
+            if last_attempt_at is None or a.created_at > last_attempt_at:
+                last_attempt_at = a.created_at
+
+        incorrect_count = len(item_attempts) - correct_count
+        not_attempted = len(enrolled_user_ids - attempted_users)
+        correct_rate = round(100 * correct_count / len(item_attempts), 1) if item_attempts else 0.0
+        attempts_counts = list(per_user_attempts.values())
+        avg_attempts = round(sum(attempts_counts) / len(attempts_counts), 1) if attempts_counts else None
+        median_attempts = round(median(attempts_counts), 1) if attempts_counts else None
+        avg_score = round(score_sum / len(item_attempts), 1) if item_attempts else 0.0
+
+        rows.append({
+            "item_id": item.id,
+            "title": item.title,
+            "module_title": _ancestor_title(by_id, item.id, LearningItemType.MODULE),
+            "topic_title": _ancestor_title(by_id, item.id, LearningItemType.TOPIC),
+            "enrolled_count": len(enrolled_user_ids),
+            "students_attempted": len(attempted_users),
+            "correct_count": correct_count,
+            "incorrect_count": incorrect_count,
+            "correct_rate_percent": correct_rate,
+            "avg_attempts": avg_attempts,
+            "median_attempts": median_attempts,
+            "students_not_attempted": not_attempted,
+            "avg_score": avg_score,
+            "last_attempt_at": last_attempt_at,
+        })
+    return rows
+
+
+def oge_overview(db: Session, course_id: int, tasks: Optional[list[dict]] = None) -> dict:
+    """ANA-001 для ОГЭ: сводка по курсу — число заданий, доля решённых,
+    средний процент правильных ответов, самые сложные/лёгкие задания,
+    статистика по модулям. completion_percent берётся из course_overview,
+    т.к. завершённость курса не зависит от типа задания."""
+    if tasks is None:
+        tasks = oge_task_analytics(db, course_id)
+
+    total_tasks = len(tasks)
+    solved_tasks = sum(1 for t in tasks if t["correct_count"] > 0)
+    total_attempts = sum(t["correct_count"] + t["incorrect_count"] for t in tasks)
+    avg_correct_rate = round(sum(t["correct_rate_percent"] for t in tasks) / total_tasks, 1) if total_tasks else 0.0
+
+    attempted_tasks = [t for t in tasks if (t["correct_count"] + t["incorrect_count"]) > 0]
+    ranked = sorted(attempted_tasks, key=lambda t: t["correct_rate_percent"])
+    hardest_tasks = ranked[:5]
+    easiest_tasks = list(reversed(ranked))[:5]
+
+    by_module: dict[str, dict] = {}
+    for t in tasks:
+        key = t["module_title"] or "Без модуля"
+        agg = by_module.setdefault(key, {"module_title": key, "tasks_count": 0, "attempts_total": 0, "_rate_sum": 0.0})
+        agg["tasks_count"] += 1
+        agg["attempts_total"] += t["correct_count"] + t["incorrect_count"]
+        agg["_rate_sum"] += t["correct_rate_percent"]
+    module_stats = []
+    for agg in by_module.values():
+        rate_sum = agg.pop("_rate_sum")
+        agg["avg_correct_rate_percent"] = round(rate_sum / agg["tasks_count"], 1) if agg["tasks_count"] else 0.0
+        module_stats.append(agg)
+
+    completion_percent = course_overview(db, course_id)["completion_percent"]
+
+    return {
+        "total_tasks": total_tasks,
+        "solved_tasks": solved_tasks,
+        "avg_correct_rate_percent": avg_correct_rate,
+        "total_attempts": total_attempts,
+        "completion_percent": completion_percent,
+        "hardest_tasks": hardest_tasks,
+        "easiest_tasks": easiest_tasks,
+        "by_module": module_stats,
+    }

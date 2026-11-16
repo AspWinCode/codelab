@@ -337,10 +337,13 @@ def get_course_analytics(course_id: int, db: Session = Depends(get_db), staff: U
     if staff.role == "methodist":
         course_admin.ensure_course_owner(course_admin.get_course_or_404(db, course_id), staff)
 
+    oge_tasks = analytics.oge_task_analytics(db, course_id)
     return CourseAnalyticsOut(
         generated_at=datetime.now(timezone.utc),
         overview=analytics.course_overview(db, course_id),
         tasks=analytics.task_difficulty(db, course_id),
+        oge_overview=analytics.oge_overview(db, course_id, oge_tasks),
+        oge_tasks=oge_tasks,
     )
 
 

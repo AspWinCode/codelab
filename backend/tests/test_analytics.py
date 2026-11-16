@@ -15,7 +15,8 @@ from app.models import (
     User,
     Verdict,
 )
-from app.services.analytics import course_overview, task_difficulty
+from app.models import OgeAttempt
+from app.services.analytics import course_overview, oge_overview, oge_task_analytics, task_difficulty
 
 
 def _setup_course(db):
@@ -98,3 +99,116 @@ def test_task_difficulty_ranks_failures_and_attempts(db_session):
     assert row["avg_attempts_to_solve"] == 3.0  # s1 решил с 3-й попытки
     assert row["failure_rate_percent"] == 50.0  # 1 из 2 пытавшихся не решил
     assert row["most_common_failure_verdict"] == "Wrong Answer"  # 2 WA vs 1 RE
+
+
+def _setup_oge_course(db):
+    course = Course(title="C-OGE")
+    db.add(course)
+    db.flush()
+    version = CourseVersion(course_id=course.id, version_number=1, published_at=datetime.now(timezone.utc))
+    db.add(version)
+    db.flush()
+    course.active_version_id = version.id
+
+    module = LearningItem(course_version_id=version.id, type=LearningItemType.MODULE, title="Модуль 1")
+    db.add(module)
+    db.flush()
+    topic = LearningItem(course_version_id=version.id, type=LearningItemType.TOPIC, title="Тема 1", parent_id=module.id)
+    db.add(topic)
+    db.flush()
+    easy = LearningItem(
+        course_version_id=version.id, type=LearningItemType.OGE_TASK, title="Лёгкое", parent_id=topic.id,
+        oge_answer={"answer": "12"},
+    )
+    hard = LearningItem(
+        course_version_id=version.id, type=LearningItemType.OGE_TASK, title="Сложное", parent_id=topic.id,
+        oge_answer={"answer": "7"},
+    )
+    db.add_all([easy, hard])
+    db.commit()
+    return course, easy, hard
+
+
+def test_oge_task_analytics_no_attempts(db_session):
+    course, easy, hard = _setup_oge_course(db_session)
+    s1 = _make_student(db_session, "s1")
+    db_session.add(Enrollment(user_id=s1.id, course_id=course.id, course_version_id=course.active_version_id, status=EnrollmentStatus.ACTIVE))
+    db_session.commit()
+
+    rows = oge_task_analytics(db_session, course.id)
+    assert len(rows) == 2
+    for row in rows:
+        assert row["students_attempted"] == 0
+        assert row["correct_count"] == 0
+        assert row["incorrect_count"] == 0
+        assert row["students_not_attempted"] == 1
+        assert row["correct_rate_percent"] == 0.0
+        assert row["avg_attempts"] is None
+        assert row["median_attempts"] is None
+        assert row["last_attempt_at"] is None
+
+
+def test_oge_task_analytics_multiple_attempts_and_retry(db_session):
+    course, easy, hard = _setup_oge_course(db_session)
+    s1 = _make_student(db_session, "s1")
+    s2 = _make_student(db_session, "s2")
+    s3 = _make_student(db_session, "s3")
+    for s in (s1, s2, s3):
+        db_session.add(Enrollment(user_id=s.id, course_id=course.id, course_version_id=course.active_version_id, status=EnrollmentStatus.ACTIVE))
+    db_session.commit()
+
+    # easy: s1 решил сразу, s2 решил со 2-й попытки (повторная попытка), s3 не пытался
+    db_session.add(OgeAttempt(user_id=s1.id, item_id=easy.id, answer="12", score=100.0))
+    db_session.add(OgeAttempt(user_id=s2.id, item_id=easy.id, answer="11", score=0.0))
+    db_session.add(OgeAttempt(user_id=s2.id, item_id=easy.id, answer="12", score=100.0))
+    # hard: только s1 пытался, неправильно
+    db_session.add(OgeAttempt(user_id=s1.id, item_id=hard.id, answer="1", score=0.0))
+    db_session.commit()
+
+    rows = {r["item_id"]: r for r in oge_task_analytics(db_session, course.id)}
+
+    easy_row = rows[easy.id]
+    assert easy_row["module_title"] == "Модуль 1"
+    assert easy_row["topic_title"] == "Тема 1"
+    assert easy_row["students_attempted"] == 2
+    assert easy_row["correct_count"] == 2
+    assert easy_row["incorrect_count"] == 1
+    assert easy_row["students_not_attempted"] == 1  # s3
+    assert easy_row["correct_rate_percent"] == round(100 * 2 / 3, 1)
+    assert easy_row["avg_attempts"] == 1.5  # s1: 1, s2: 2
+    assert easy_row["median_attempts"] == 1.5
+    assert easy_row["last_attempt_at"] is not None
+
+    hard_row = rows[hard.id]
+    assert hard_row["students_attempted"] == 1
+    assert hard_row["correct_count"] == 0
+    assert hard_row["incorrect_count"] == 1
+    assert hard_row["students_not_attempted"] == 2
+    assert hard_row["correct_rate_percent"] == 0.0
+
+
+def test_oge_task_analytics_sorts_hardest_and_easiest_by_correct_rate(db_session):
+    course, easy, hard = _setup_oge_course(db_session)
+    s1 = _make_student(db_session, "s1")
+    s2 = _make_student(db_session, "s2")
+    for s in (s1, s2):
+        db_session.add(Enrollment(user_id=s.id, course_id=course.id, course_version_id=course.active_version_id, status=EnrollmentStatus.ACTIVE))
+    db_session.commit()
+
+    # easy: 100% верно
+    db_session.add(OgeAttempt(user_id=s1.id, item_id=easy.id, answer="12", score=100.0))
+    db_session.add(OgeAttempt(user_id=s2.id, item_id=easy.id, answer="12", score=100.0))
+    # hard: 0% верно
+    db_session.add(OgeAttempt(user_id=s1.id, item_id=hard.id, answer="1", score=0.0))
+    db_session.add(OgeAttempt(user_id=s2.id, item_id=hard.id, answer="2", score=0.0))
+    db_session.commit()
+
+    overview = oge_overview(db_session, course.id)
+    assert overview["total_tasks"] == 2
+    assert overview["solved_tasks"] == 1
+    assert overview["total_attempts"] == 4
+    assert overview["hardest_tasks"][0]["item_id"] == hard.id
+    assert overview["easiest_tasks"][0]["item_id"] == easy.id
+    assert len(overview["by_module"]) == 1
+    assert overview["by_module"][0]["module_title"] == "Модуль 1"
+    assert overview["by_module"][0]["tasks_count"] == 2
