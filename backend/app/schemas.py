@@ -381,6 +381,23 @@ class OgeOverviewOut(BaseModel):
     by_module: List[OgeModuleStatsOut]
 
 
+class ValidationErrorOut(BaseModel):
+    """LMS-010 (ТЗ Этап 4): одна проблема целостности черновика перед
+    публикацией — см. app/services/course_validator.py."""
+
+    item_id: Optional[int]
+    code: str
+    message: str
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class CourseValidationOut(BaseModel):
+    valid: bool
+    errors: List[ValidationErrorOut]
+    warnings: List[ValidationErrorOut] = []
+
+
 class CourseAnalyticsOut(BaseModel):
     generated_at: datetime  # ANA-005: дата актуальности метрик
     overview: CourseOverviewOut

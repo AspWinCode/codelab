@@ -16,6 +16,7 @@ from app.schemas import (
     CourseCreate,
     CourseOut,
     CourseUpdate,
+    CourseValidationOut,
     LastPositionIn,
     LearningItemArchiveIn,
     LearningItemCreate,
@@ -32,6 +33,7 @@ from app.schemas import (
     RerunSubmissionsOut,
 )
 from app.services import course_admin
+from app.services.course_validator import validate_course_before_publish
 from app.services.oge_files import oge_file_path, save_oge_file
 
 router = APIRouter()
@@ -313,9 +315,22 @@ def delete_course(course_id: int, db: Session = Depends(get_db), user: User = De
     course_admin.delete_course(db, course_id)
 
 
+@router.get("/{course_id}/validation", response_model=CourseValidationOut)
+def get_course_validation(course_id: int, db: Session = Depends(get_db), user: User = Depends(require_role("methodist", "admin"))):
+    course_admin.ensure_course_owner(course_admin.get_course_or_404(db, course_id), user)
+    errors = validate_course_before_publish(db, course_id)
+    return CourseValidationOut(valid=not errors, errors=errors, warnings=[])
+
+
 @router.post("/{course_id}/publish", response_model=CourseOut)
 async def publish_course(course_id: int, db: Session = Depends(get_db), user: User = Depends(require_role("methodist", "admin"))):
     course_admin.ensure_course_owner(course_admin.get_course_or_404(db, course_id), user)
+    errors = validate_course_before_publish(db, course_id)
+    if errors:
+        raise HTTPException(
+            status_code=422,
+            detail={"valid": False, "errors": [e.__dict__ for e in errors], "warnings": []},
+        )
     return await course_admin.publish_course(db, course_id, actor_id=user.id)
 
 

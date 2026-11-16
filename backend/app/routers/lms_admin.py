@@ -26,6 +26,7 @@ from app.schemas import (
     CourseCreate,
     CourseOut,
     CourseUpdate,
+    CourseValidationOut,
     EnvironmentOut,
     LearningItemArchiveIn,
     LearningItemCreate,
@@ -48,6 +49,7 @@ from app.schemas import (
 )
 from app.security import verify_lms_signature
 from app.services import admin_status, analytics, course_admin, project_admin
+from app.services.course_validator import validate_course_before_publish
 from app.services.environments import list_environments
 from app.services.progress_calc import apply_manual_grade
 from app.services.project_files import project_file_path
@@ -263,9 +265,26 @@ def delete_course(course_id: int, db: Session = Depends(get_db), staff: User = D
     course_admin.delete_course(db, course_id)
 
 
+@router.get("/courses/{course_id}/validation", response_model=CourseValidationOut)
+def get_course_validation(course_id: int, db: Session = Depends(get_db), staff: User = Depends(resolve_staff_user)):
+    """LMS-010: список проблем черновика — чтобы фронтенд методиста мог
+    показать их до попытки опубликовать (сама публикация блокируется тем
+    же списком в publish_course ниже)."""
+    if staff.role == "methodist":
+        course_admin.ensure_course_owner(course_admin.get_course_or_404(db, course_id), staff)
+    errors = validate_course_before_publish(db, course_id)
+    return CourseValidationOut(valid=not errors, errors=errors, warnings=[])
+
+
 @router.post("/courses/{course_id}/publish", response_model=CourseOut)
 async def publish_course(course_id: int, db: Session = Depends(get_db), staff: User = Depends(resolve_staff_user)):
     course_admin.ensure_course_owner(course_admin.get_course_or_404(db, course_id), staff)
+    errors = validate_course_before_publish(db, course_id)
+    if errors:
+        raise HTTPException(
+            status_code=422,
+            detail={"valid": False, "errors": [e.__dict__ for e in errors], "warnings": []},
+        )
     return await course_admin.publish_course(db, course_id, actor_id=staff.id)
 
 
