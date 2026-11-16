@@ -42,12 +42,13 @@ class Settings(BaseSettings):
     uploads_dir: str = "uploads"
     upload_max_image_mb: int = 10
     upload_max_video_mb: int = 200
-    upload_max_document_mb: int = 20
+    upload_max_document_mb: int = 100
     upload_max_audio_mb: int = 50
     upload_allowed_image_ext: str = "jpg,jpeg,png,gif,webp"
     upload_allowed_video_ext: str = "mp4,webm,mov"
-    # Материалы лекций (PDF-конспекты, аудиозаписи) — не только редактор картинок/видео.
-    upload_allowed_document_ext: str = "pdf"
+    # Материалы лекций и вложения к задачам — офисные документы и архивы тоже
+    # должны проходить через тот же HMAC admin-API, которым пользуется LMS.
+    upload_allowed_document_ext: str = "pdf,doc,docx,ppt,pptx,xls,xlsx,rar,zip,7z,txt,csv,rtf"
     upload_allowed_audio_ext: str = "mp3,wav"
 
     # Файлы проектов (PRJ): исходный код и сопутствующие материалы ученика —

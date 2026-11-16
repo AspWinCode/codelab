@@ -6,6 +6,8 @@ import hashlib
 import hmac
 import io
 
+import pytest
+
 from app.config import settings
 
 
@@ -36,6 +38,17 @@ def test_upload_image_ok(client):
     body = resp.json()
     assert body["url"].startswith("/uploads/")
     assert body["content_type"] == "image/png"
+
+
+@pytest.mark.parametrize("filename", ["task.doc", "task.docx", "task.rar", "task.zip"])
+def test_upload_task_attachment_formats_ok(client, filename):
+    resp = client.post(
+        f"/api/lms-admin/uploads?{_staff_qs()}",
+        files={"file": (filename, io.BytesIO(b"attachment-bytes"), "application/octet-stream")},
+        headers={"X-LP-Signature": _sig("lp-user-1")},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["url"].startswith("/uploads/")
 
 
 def test_upload_rejects_disallowed_extension(client):
