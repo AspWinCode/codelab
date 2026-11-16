@@ -246,6 +246,17 @@ export const api = {
   courses: () => request<Course[]>('/courses'),
   dashboard: () => request<Dashboard>('/me/dashboard'),
   getTree: (courseId: number) => request<LearningItemTree[]>(`/courses/${courseId}/tree`),
+  // Этап 5 (ТЗ) — «Предпросмотр как ученик»: черновик курса в student-форме,
+  // проверка ответов ничего не сохраняет (см. backend/app/services/course_admin.py).
+  getPreviewTree: (courseId: number) => request<LearningItemTree[]>(`/courses/${courseId}/preview-tree`),
+  previewCheckOge: (courseId: number, itemId: number, answer: string) =>
+    request<{ is_correct: boolean }>(`/courses/${courseId}/oge/${itemId}/preview-check`, {
+      method: 'POST', body: JSON.stringify({ answer }),
+    }),
+  previewCheckQuiz: (courseId: number, itemId: number, answers: number[][]) =>
+    request<{ score: number }>(`/courses/${courseId}/quiz/${itemId}/preview-check`, {
+      method: 'POST', body: JSON.stringify({ answers }),
+    }),
   setLastPosition: (courseId: number, itemId: number) =>
     request(`/courses/${courseId}/last-position`, { method: 'PUT', body: JSON.stringify({ item_id: itemId }) }),
   completeItem: (courseId: number, itemId: number) =>

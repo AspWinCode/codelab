@@ -150,6 +150,25 @@ class QuizAttemptOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class OgePreviewCheckIn(BaseModel):
+    """Этап 5 (ТЗ) — предпросмотр: тот же ввод, что и у настоящей попытки,
+    но ответ только проверяется (check_oge_answer), ничего не сохраняется."""
+
+    answer: str
+
+
+class OgePreviewCheckOut(BaseModel):
+    is_correct: bool
+
+
+class QuizPreviewCheckIn(BaseModel):
+    answers: List[List[int]]
+
+
+class QuizPreviewCheckOut(BaseModel):
+    score: float
+
+
 class OgeAnswerIn(BaseModel):
     """Новый формат oge_answer (ТЗ п.16.9 — старый плоский текст ответа
     продолжает работать через LearningItemCreate/Update.oge_answer: str,

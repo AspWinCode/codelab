@@ -1,6 +1,6 @@
 import { Notifications as NotificationsIcon } from '@mui/icons-material';
 import {
-  Alert, Badge, Box, Card, CardActionArea, CardContent, Checkbox, Chip, Container,
+  Alert, Badge, Box, Button, Card, CardActionArea, CardContent, Checkbox, Chip, Container,
   Divider, FormControlLabel, IconButton, LinearProgress, List, ListItem, ListItemText,
   Menu, Stack, Typography,
 } from '@mui/material';
@@ -201,6 +201,17 @@ export default function App() {
                         <Typography variant="subtitle1">{c.title}</Typography>
                       </CardContent>
                     </CardActionArea>
+                    {/* Этап 5 (ТЗ) — методист смотрит черновик курса так же,
+                        как его увидит ученик (/preview-tree), без сохранения
+                        попыток/прогресса. Для преподавателя (teacher) эндпоинт
+                        недоступен (require_role в backend/app/routers/courses.py). */}
+                    {(me?.role === 'methodist' || me?.role === 'admin') && (
+                      <CardContent sx={{ pt: 0 }}>
+                        <Button size="small" onClick={() => navigate(`/courses/${c.id}/preview`)}>
+                          Предпросмотр как ученик
+                        </Button>
+                      </CardContent>
+                    )}
                   </Card>
                 ))}
               </Stack>

@@ -4,7 +4,7 @@ import {
   FormGroup, IconButton, List, ListItem, ListItemButton, ListItemIcon, ListItemText, Paper, Stack, TextField, Tooltip, Typography,
 } from '@mui/material';
 import { SyntheticEvent, useCallback, useEffect, useRef, useState } from 'react';
-import { useParams, useSearchParams } from 'react-router-dom';
+import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { api, LearningItemTree, OgeAttempt, ProblemForStudent, ProjectSubmission, QuizAttempt, RunResult, Submission } from '../api';
 import CodeEditor from '../components/CodeEditor';
 import Layout from '../components/Layout';
@@ -304,9 +304,9 @@ const DEFAULT_PANE_PERCENT = 42;
 const MIN_PANE_PERCENT = 15;
 const MAX_PANE_PERCENT = 85;
 
-function StepIframeTaskView({ item, iframeUrl, iframeTitle, expandLabel, courseId, onCompleted }: {
+function StepIframeTaskView({ item, iframeUrl, iframeTitle, expandLabel, courseId, onCompleted, preview }: {
   item: LearningItemTree; iframeUrl: string; iframeTitle: string; expandLabel: string;
-  courseId: number; onCompleted: () => void;
+  courseId: number; onCompleted: () => void; preview?: boolean;
 }) {
   const steps = item.steps || [];
   const [stepIndex, setStepIndex] = useState(0);
@@ -376,25 +376,33 @@ function StepIframeTaskView({ item, iframeUrl, iframeTitle, expandLabel, courseI
           </Stack>
         )}
         {/* Snap!/GDevelop/Черепашка пока без автопроверки (README) — это
-            единственный способ для ученика получить зелёную отметку. */}
+            единственный способ для ученика получить зелёную отметку. В
+            предпросмотре (Этап 5 ТЗ) отметка недоступна — она записала бы
+            реальный ItemCompletion методисту. */}
         <Stack direction="row" sx={{ p: 2, borderTop: '1px solid', borderColor: 'divider' }}>
-          <Button
-            variant={item.completed ? 'outlined' : 'contained'}
-            color="success"
-            disabled={item.completed || marking}
-            startIcon={item.completed ? <CheckCircle fontSize="small" /> : undefined}
-            onClick={async () => {
-              setMarking(true);
-              try {
-                await api.completeItem(courseId, item.id);
-                onCompleted();
-              } finally {
-                setMarking(false);
-              }
-            }}
-          >
-            {item.completed ? 'Выполнено' : 'Отметить выполненным'}
-          </Button>
+          {preview ? (
+            <Typography variant="body2" color="text.secondary">
+              Отметка «выполнено» недоступна в режиме предпросмотра.
+            </Typography>
+          ) : (
+            <Button
+              variant={item.completed ? 'outlined' : 'contained'}
+              color="success"
+              disabled={item.completed || marking}
+              startIcon={item.completed ? <CheckCircle fontSize="small" /> : undefined}
+              onClick={async () => {
+                setMarking(true);
+                try {
+                  await api.completeItem(courseId, item.id);
+                  onCompleted();
+                } finally {
+                  setMarking(false);
+                }
+              }}
+            >
+              {item.completed ? 'Выполнено' : 'Отметить выполненным'}
+            </Button>
+          )}
         </Stack>
       </Box>
 
@@ -566,20 +574,25 @@ function TurtleProjectView({ item }: { item: LearningItemTree }) {
  * локальный стейт при переключении на другой тест (та же проблема, что
  * чинили для code-редактора задач — старые отметки не должны переползать
  * на новый тест). */
-function QuizView({ item, onSubmitted }: { item: LearningItemTree; onSubmitted: () => void }) {
+function QuizView({ item, onSubmitted, courseId, preview }: {
+  item: LearningItemTree; onSubmitted: () => void; courseId: number; preview?: boolean;
+}) {
   const questions = item.quiz_questions || [];
   const [selected, setSelected] = useState<Set<number>[]>(() => questions.map(() => new Set()));
-  const [result, setResult] = useState<QuizAttempt | null>(null);
+  const [result, setResult] = useState<{ score: number } | null>(null);
   const [lastAttempt, setLastAttempt] = useState<QuizAttempt | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
 
   useEffect(() => {
+    // Этап 5 (ТЗ) — в предпросмотре попытки не сохраняются, поэтому истории
+    // попыток для черновика и быть не может (см. api.previewCheckQuiz).
+    if (preview) return;
     api.myQuizAttempts(item.id)
       .then((attempts) => setLastAttempt(attempts[0] || null))
       .catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [item.id]);
+  }, [item.id, preview]);
 
   const toggleOption = (qi: number, oi: number) => {
     setSelected((prev) => {
@@ -593,12 +606,17 @@ function QuizView({ item, onSubmitted }: { item: LearningItemTree; onSubmitted: 
     setSubmitting(true);
     setError('');
     try {
-      const attempt = await api.submitQuizAttempt(item.id, selected.map((s) => Array.from(s)));
-      setResult(attempt);
-      setLastAttempt(attempt);
-      // Индикатор в дереве курса (зелёный кружок) считается по 100% —
-      // обновляем сразу, без перезагрузки страницы, как и после задачи.
-      onSubmitted();
+      const answers = selected.map((s) => Array.from(s));
+      if (preview) {
+        setResult(await api.previewCheckQuiz(courseId, item.id, answers));
+      } else {
+        const attempt = await api.submitQuizAttempt(item.id, answers);
+        setResult(attempt);
+        setLastAttempt(attempt);
+        // Индикатор в дереве курса (зелёный кружок) считается по 100% —
+        // обновляем сразу, без перезагрузки страницы, как и после задачи.
+        onSubmitted();
+      }
     } catch (e: any) {
       setError(e.message);
     } finally {
@@ -645,28 +663,38 @@ function QuizView({ item, onSubmitted }: { item: LearningItemTree; onSubmitted: 
   );
 }
 
-function OgeTaskView({ item, onSubmitted }: { item: LearningItemTree; onSubmitted: () => void }) {
+function OgeTaskView({ item, onSubmitted, courseId, preview }: {
+  item: LearningItemTree; onSubmitted: () => void; courseId: number; preview?: boolean;
+}) {
   const [answer, setAnswer] = useState('');
   const [file, setFile] = useState<File | null>(null);
-  const [result, setResult] = useState<OgeAttempt | null>(null);
+  const [result, setResult] = useState<{ score: number } | null>(null);
   const [lastAttempt, setLastAttempt] = useState<OgeAttempt | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
 
   useEffect(() => {
+    // Этап 5 (ТЗ): в предпросмотре попытки не сохраняются — у черновика их
+    // попросту не может быть (см. api.previewCheckOge).
+    if (preview) return;
     api.myOgeAttempts(item.id).then((items) => setLastAttempt(items[0] || null)).catch(() => {});
-  }, [item.id]);
+  }, [item.id, preview]);
 
   const submit = async () => {
     if (!answer.trim()) return;
     setSubmitting(true);
     setError('');
     try {
-      const attempt = await api.submitOgeAttempt(item.id, answer, file);
-      setResult(attempt);
-      setLastAttempt(attempt);
-      setFile(null);
-      onSubmitted();
+      if (preview) {
+        const { is_correct } = await api.previewCheckOge(courseId, item.id, answer);
+        setResult({ score: is_correct ? 100 : 0 });
+      } else {
+        const attempt = await api.submitOgeAttempt(item.id, answer, file);
+        setResult(attempt);
+        setLastAttempt(attempt);
+        setFile(null);
+        onSubmitted();
+      }
     } catch (e: any) {
       setError(e.message);
     } finally {
@@ -705,22 +733,120 @@ function OgeTaskView({ item, onSubmitted }: { item: LearningItemTree; onSubmitte
           <TextField size="small" value={answer} onChange={(e) => setAnswer(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') submit(); }} inputProps={{ inputMode: 'decimal', 'aria-label': 'Ответ' }} />
           <Button variant="contained" onClick={submit} disabled={submitting || !answer.trim()} sx={{ ml: 1 }}>Проверить</Button>
         </Paper>
-        <Stack direction="row" spacing={1} alignItems="center" sx={{ mt: 1.5 }}>
-          <Button component="label" size="small" variant="outlined" startIcon={<AttachFile fontSize="small" />}>
-            {file ? 'Заменить файл' : 'Прикрепить файл'}
-            <input type="file" hidden onChange={(e) => setFile(e.target.files?.[0] || null)} />
-          </Button>
-          {file && (
-            <>
-              <Typography variant="body2" color="text.secondary">{file.name}</Typography>
-              <Button size="small" onClick={() => setFile(null)}>Убрать</Button>
-            </>
-          )}
-        </Stack>
-        <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.5 }}>
-          Файл необязателен и не проверяется автоматически — например, фото решения на бумаге (jpg, png, webp, pdf).
-        </Typography>
+        {!preview && (
+          <>
+            <Stack direction="row" spacing={1} alignItems="center" sx={{ mt: 1.5 }}>
+              <Button component="label" size="small" variant="outlined" startIcon={<AttachFile fontSize="small" />}>
+                {file ? 'Заменить файл' : 'Прикрепить файл'}
+                <input type="file" hidden onChange={(e) => setFile(e.target.files?.[0] || null)} />
+              </Button>
+              {file && (
+                <>
+                  <Typography variant="body2" color="text.secondary">{file.name}</Typography>
+                  <Button size="small" onClick={() => setFile(null)}>Убрать</Button>
+                </>
+              )}
+            </Stack>
+            <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.5 }}>
+              Файл необязателен и не проверяется автоматически — например, фото решения на бумаге (jpg, png, webp, pdf).
+            </Typography>
+          </>
+        )}
       </Box>
+    </Container>
+  );
+}
+
+/** Этап 5 (ТЗ) — предпросмотр программной задачи: условие + примеры +
+ * редактор кода с «Запустить» (POST /submissions/run — без побочных
+ * эффектов, см. docker-compose.yml). «Отправить», автосохранение
+ * черновика и история попыток сюда не входят намеренно — они пишут в
+ * реальные таблицы (Submission/Draft) от имени методиста. */
+function TaskPreviewView({ item }: { item: LearningItemTree }) {
+  const [problem, setProblem] = useState<ProblemForStudent | null>(null);
+  const [code, setCode] = useState('');
+  const [stdin, setStdin] = useState('');
+  const [runResult, setRunResult] = useState<RunResult | null>(null);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    setProblem(null);
+    setRunResult(null);
+    setError('');
+    if (!item.problem_revision_id) return;
+    setCode('');
+    api.getProblem(item.problem_revision_id)
+      .then((p) => { setProblem(p); setCode(p.template_code || ''); })
+      .catch((e) => setError(e.message));
+  }, [item.id, item.problem_revision_id]);
+
+  const run = async () => {
+    if (!item.problem_revision_id) return;
+    setError('');
+    try {
+      setRunResult(await api.run(item.problem_revision_id, code, stdin));
+    } catch (e: any) {
+      setError(e.message);
+    }
+  };
+
+  return (
+    <Container maxWidth="md" sx={{ py: 4 }}>
+      <Typography variant="h2" sx={{ mb: 2 }}>{item.title}</Typography>
+      {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
+      {problem && (
+        <Box sx={{ mb: 2.5 }}>
+          <Box className="preview" dangerouslySetInnerHTML={{ __html: renderContentHtml(problem.statement) }} />
+          {problem.visible_tests.length > 0 && (
+            <Stack spacing={1} sx={{ mt: 1.5 }}>
+              {problem.visible_tests.map((t, i) => (
+                <Stack key={i} direction="row" spacing={2}>
+                  <Box component="pre" sx={{ flex: 1, m: 0, fontFamily: FONT_CODE, fontSize: '0.8125rem', bgcolor: 'background.default', border: '1px solid', borderColor: 'divider', borderRadius: 2, p: 1.5, whiteSpace: 'pre-wrap' }}>{t.input}</Box>
+                  <Box component="pre" sx={{ flex: 1, m: 0, fontFamily: FONT_CODE, fontSize: '0.8125rem', bgcolor: 'background.paper', border: '1px solid', borderColor: 'divider', borderRadius: 2, p: 1.5, whiteSpace: 'pre-wrap' }}>{t.expected}</Box>
+                </Stack>
+              ))}
+            </Stack>
+          )}
+        </Box>
+      )}
+      <CodeEditor key={item.id} value={code} onChange={setCode} language={problem?.language ?? 'python3'} />
+      <TextField
+        label="stdin для «Запустить»" multiline fullWidth minRows={2} maxRows={6}
+        inputProps={{ style: { fontFamily: FONT_CODE } }}
+        value={stdin} onChange={(e) => setStdin(e.target.value)}
+        sx={{ mt: 1, mb: 2 }}
+      />
+      <Button variant="contained" onClick={run}>Запустить</Button>
+      <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 1 }}>
+        В режиме предпросмотра доступен только прогон кода — отправка на проверку отключена.
+      </Typography>
+      {runResult && (
+        <Box sx={{ mt: 2 }}>
+          <Box component="pre" sx={{ ...RESULT_PRE_SX, mb: runResult.error_explanation ? 1 : 0 }}>
+            stdout: {runResult.stdout}
+            {'\n'}stderr: {runResult.stderr}
+            {runResult.timed_out ? '\n(превышено время выполнения)' : ''}
+          </Box>
+          {runResult.error_explanation && <Alert severity="info">{runResult.error_explanation}</Alert>}
+        </Box>
+      )}
+    </Container>
+  );
+}
+
+/** Этап 5 (ТЗ) — предпросмотр проекта: только условие, без загрузки файлов
+ * (ProjectSubmission/ProjectFile — реальные таблицы, писать туда от имени
+ * методиста не нужно). */
+function ProjectPreviewView({ item }: { item: LearningItemTree }) {
+  return (
+    <Container maxWidth="md" sx={{ py: 4 }}>
+      <Typography variant="h2" sx={{ mb: 2 }}>{item.title}</Typography>
+      {(item.content || item.description) && (
+        <Box className="preview" dangerouslySetInnerHTML={{ __html: renderContentHtml(item.content || item.description || '') }} />
+      )}
+      <Alert severity="info" sx={{ mt: 2 }}>
+        В режиме предпросмотра загрузка и отправка файлов проекта отключены.
+      </Alert>
     </Container>
   );
 }
@@ -816,8 +942,13 @@ function VerdictChip({ verdict, score }: { verdict: string | null; score: number
 
 /** STU-002: структура курса, статусы элементов, доступность заблокированных
  * (LMS-004). STU-004: история попыток по выбранной задаче. STU-005: последняя
- * открытая позиция сохраняется на сервере и подставляется через ?item=. */
-export default function CoursePage() {
+ * открытая позиция сохраняется на сервере и подставляется через ?item=.
+ *
+ * preview=true — Этап 5 (ТЗ) «Предпросмотр как ученик»: та же разметка, но
+ * дерево читается из черновика курса (api.getPreviewTree), последняя
+ * позиция не сохраняется, а задания с автопроверкой (ОГЭ/тест) проверяют
+ * ответ без сохранения попытки — см. OgeTaskView/QuizView выше. */
+export default function CoursePage({ preview = false }: { preview?: boolean }) {
   const { courseId } = useParams();
   const [searchParams] = useSearchParams();
   const [tree, setTree] = useState<LearningItemTree[]>([]);
@@ -910,7 +1041,7 @@ export default function CoursePage() {
   }, []);
 
   useEffect(() => {
-    api.getTree(Number(courseId)).then((t) => {
+    (preview ? api.getPreviewTree(Number(courseId)) : api.getTree(Number(courseId))).then((t) => {
       setTree(t);
       const wantedId = Number(searchParams.get('item'));
       const flat = flatten(t);
@@ -918,7 +1049,7 @@ export default function CoursePage() {
       if (initial) selectItem(initial);
     }).catch((e) => setError(e.message));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [courseId]);
+  }, [courseId, preview]);
 
   useEffect(() => () => {
     if (pollTimer.current) clearInterval(pollTimer.current);
@@ -954,6 +1085,12 @@ export default function CoursePage() {
     setSaveStatus('idle');
     pendingCodeRef.current = '';
     activeProblemRef.current = item.type === 'task' ? item.problem_revision_id ?? null : null;
+    // Предпросмотр (Этап 5 ТЗ): "последняя позиция" — реальное поле
+    // Enrollment.last_item_id настоящего студента, у методиста в
+    // предпросмотре его просто нет смысла трогать. Программная задача в
+    // предпросмотре рендерится отдельным, самодостаточным TaskPreviewView
+    // (ниже) — не трогает draft/submissions/история этого компонента.
+    if (preview) return;
     api.setLastPosition(Number(courseId), item.id)
       .then(() => api.getTree(Number(courseId)).then(setTree))
       .catch(() => {});
@@ -994,6 +1131,7 @@ export default function CoursePage() {
   };
 
   const refreshTreeAndSelected = () => {
+    if (preview) return;
     api.getTree(Number(courseId)).then((t) => {
       setTree(t);
       if (selected) {
@@ -1004,7 +1142,7 @@ export default function CoursePage() {
   };
 
   const markSelectedCompleted = async () => {
-    if (!selected) return;
+    if (!selected || preview) return;
     setCompletingItem(true);
     try {
       await api.completeItem(Number(courseId), selected.id);
@@ -1078,6 +1216,13 @@ export default function CoursePage() {
     setLectureNavigationBusy(true);
     setError('');
     try {
+      // Предпросмотр (Этап 5 ТЗ): просто переключаем выбранный узел по уже
+      // загруженному дереву черновика — ни "изучено", ни "последняя
+      // позиция" у методиста тут не настоящий прогресс, записывать нечего.
+      if (preview) {
+        selectItem(target);
+        return;
+      }
       if (completeCurrent) await api.completeItem(Number(courseId), selected.id);
       await api.setLastPosition(Number(courseId), target.id);
       const refreshedTree = await api.getTree(Number(courseId));
@@ -1092,7 +1237,18 @@ export default function CoursePage() {
   };
 
   return (
-    <Layout>
+    <Layout
+      actions={preview ? (
+        <Button component={Link} to={`/courses/${courseId}`} size="small" color="inherit" sx={{ textTransform: 'none' }}>
+          Выйти из предпросмотра
+        </Button>
+      ) : undefined}
+    >
+      {preview && (
+        <Alert severity="info" sx={{ borderRadius: 0 }}>
+          Режим предпросмотра — вы видите черновик курса так же, как его увидит ученик. Ответы и прогресс не сохраняются.
+        </Alert>
+      )}
       <Box sx={{ display: 'flex' }}>
         <Drawer
           variant="permanent"
@@ -1110,9 +1266,9 @@ export default function CoursePage() {
 
         <Box sx={{ flex: 1, minWidth: 0 }}>
           {selected && selected.type === 'snap_task' ? (
-            <StepIframeTaskView item={selected} iframeUrl={SNAP_URL} iframeTitle="Snap!" expandLabel="Snap! на весь экран" courseId={Number(courseId)} onCompleted={refreshTreeAndSelected} />
+            <StepIframeTaskView item={selected} iframeUrl={SNAP_URL} iframeTitle="Snap!" expandLabel="Snap! на весь экран" courseId={Number(courseId)} onCompleted={refreshTreeAndSelected} preview={preview} />
           ) : selected && selected.type === 'gdevelop_task' ? (
-            <StepIframeTaskView item={selected} iframeUrl={GDEVELOP_URL} iframeTitle="GDevelop" expandLabel="GDevelop на весь экран" courseId={Number(courseId)} onCompleted={refreshTreeAndSelected} />
+            <StepIframeTaskView item={selected} iframeUrl={GDEVELOP_URL} iframeTitle="GDevelop" expandLabel="GDevelop на весь экран" courseId={Number(courseId)} onCompleted={refreshTreeAndSelected} preview={preview} />
           ) : selected && selected.type === 'turtle_task' ? (
             <StepIframeTaskView
               item={selected}
@@ -1124,13 +1280,18 @@ export default function CoursePage() {
               expandLabel="Черепашка на весь экран"
               courseId={Number(courseId)}
               onCompleted={refreshTreeAndSelected}
+              preview={preview}
             />
-          ) : selected && selected.type === 'project' && selected.embed_editor === 'turtle' ? (
+          ) : selected && selected.type === 'project' && selected.embed_editor === 'turtle' && !preview ? (
             <TurtleProjectView key={selected.id} item={selected} />
           ) : selected && selected.type === 'oge_task' ? (
-            <OgeTaskView key={selected.id} item={selected} onSubmitted={refreshTreeAndSelected} />
+            <OgeTaskView key={selected.id} item={selected} onSubmitted={refreshTreeAndSelected} courseId={Number(courseId)} preview={preview} />
           ) : selected && selected.type === 'quiz' ? (
-            <QuizView key={selected.id} item={selected} onSubmitted={refreshTreeAndSelected} />
+            <QuizView key={selected.id} item={selected} onSubmitted={refreshTreeAndSelected} courseId={Number(courseId)} preview={preview} />
+          ) : selected && selected.type === 'task' && preview ? (
+            <TaskPreviewView key={selected.id} item={selected} />
+          ) : selected && selected.type === 'project' && preview ? (
+            <ProjectPreviewView key={selected.id} item={selected} />
           ) : (
           <Container maxWidth="md" sx={{ py: 4 }}>
             {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
@@ -1169,15 +1330,21 @@ export default function CoursePage() {
                     кнопка "Дальше"), индикатор в дереве никогда не загорался. */}
                 {MATERIAL_COMPLETE_TYPES.has(selected.type) && (
                   <Stack direction="row" sx={{ mt: 4 }}>
-                    <Button
-                      variant={selected.completed ? 'outlined' : 'contained'}
-                      color="success"
-                      disabled={selected.completed || completingItem}
-                      startIcon={selected.completed ? <CheckCircle fontSize="small" /> : undefined}
-                      onClick={markSelectedCompleted}
-                    >
-                      {selected.completed ? 'Изучено' : 'Отметить изученным'}
-                    </Button>
+                    {preview ? (
+                      <Typography variant="body2" color="text.secondary">
+                        Отметка «изучено» недоступна в режиме предпросмотра.
+                      </Typography>
+                    ) : (
+                      <Button
+                        variant={selected.completed ? 'outlined' : 'contained'}
+                        color="success"
+                        disabled={selected.completed || completingItem}
+                        startIcon={selected.completed ? <CheckCircle fontSize="small" /> : undefined}
+                        onClick={markSelectedCompleted}
+                      >
+                        {selected.completed ? 'Изучено' : 'Отметить изученным'}
+                      </Button>
+                    )}
                   </Stack>
                 )}
               </Box>

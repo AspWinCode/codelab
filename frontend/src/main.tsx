@@ -30,6 +30,7 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
           <Routes>
             <Route path="/" element={<App />} />
             <Route path="/courses/:courseId" element={<CoursePage />} />
+            <Route path="/courses/:courseId/preview" element={<CoursePage preview />} />
             <Route path="/items/:itemId/edit" element={<ItemEditorPage />} />
           </Routes>
         </BrowserRouter>

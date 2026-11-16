@@ -23,11 +23,15 @@ from app.schemas import (
     LearningItemOut,
     LearningItemTree,
     LearningItemUpdate,
+    OgePreviewCheckIn,
+    OgePreviewCheckOut,
     ProblemRevisionCreate,
     ProblemRevisionOut,
     ProblemRevisionStudentOut,
     QuizAttemptCreate,
     QuizAttemptOut,
+    QuizPreviewCheckIn,
+    QuizPreviewCheckOut,
     OgeAttemptOut,
     RerunSubmissionsIn,
     RerunSubmissionsOut,
@@ -233,6 +237,32 @@ def get_tree(course_id: int, db: Session = Depends(get_db), user: User = Depends
     if user.role != "student":
         return course_admin.build_tree(items)
     return course_admin.build_student_tree(db, user.id, items)
+
+
+@router.get("/{course_id}/preview-tree", response_model=list[LearningItemTree])
+def get_preview_tree(course_id: int, db: Session = Depends(get_db), user: User = Depends(require_role("methodist", "admin"))):
+    """Этап 5 (ТЗ) — «Предпросмотр как ученик»: черновик курса в точности в
+    том виде, в каком его увидит студент после публикации."""
+    course_admin.ensure_course_owner(course_admin.get_course_or_404(db, course_id), user)
+    return course_admin.get_preview_tree(db, course_id, user.id)
+
+
+@router.post("/{course_id}/oge/{item_id}/preview-check", response_model=OgePreviewCheckOut)
+def preview_check_oge(
+    course_id: int, item_id: int, payload: OgePreviewCheckIn,
+    db: Session = Depends(get_db), user: User = Depends(require_role("methodist", "admin")),
+):
+    course_admin.ensure_course_owner(course_admin.get_course_or_404(db, course_id), user)
+    return OgePreviewCheckOut(is_correct=course_admin.preview_check_oge_answer(db, course_id, item_id, payload.answer))
+
+
+@router.post("/{course_id}/quiz/{item_id}/preview-check", response_model=QuizPreviewCheckOut)
+def preview_check_quiz(
+    course_id: int, item_id: int, payload: QuizPreviewCheckIn,
+    db: Session = Depends(get_db), user: User = Depends(require_role("methodist", "admin")),
+):
+    course_admin.ensure_course_owner(course_admin.get_course_or_404(db, course_id), user)
+    return QuizPreviewCheckOut(score=course_admin.preview_check_quiz_answer(db, course_id, item_id, payload.answers))
 
 
 @router.put("/{course_id}/last-position")

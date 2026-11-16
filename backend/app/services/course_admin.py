@@ -206,6 +206,56 @@ def build_student_tree(db: Session, user_id: int, items: list[LearningItem]) -> 
     return tree
 
 
+def get_preview_tree(db: Session, course_id: int, staff_id: int) -> list[LearningItemTree]:
+    """Этап 5 (ТЗ) — «Предпросмотр как ученик»: та же сборка, что видит
+    настоящий студент (build_student_tree), но по ЧЕРНОВИКУ курса, а не по
+    опубликованной версии — методист должен увидеть курс таким, каким он
+    станет ПОСЛЕ публикации, не дожидаясь её. staff_id используется как
+    user_id для прогресса/попыток — у черновика свои id элементов (отдельные
+    от уже опубликованной версии), так что ни один реальный прогресс
+    методиста под них подставиться не может: это всегда "чистый" старт."""
+    version = get_draft_version(db, course_id)
+    items = (
+        db.query(LearningItem)
+        .filter(LearningItem.course_version_id == version.id)
+        .order_by(LearningItem.position)
+        .all()
+    )
+    return build_student_tree(db, staff_id, items)
+
+
+def _get_draft_item_for_preview(db: Session, course_id: int, item_id: int) -> LearningItem:
+    """Проверяет, что item_id реально принадлежит черновику ЭТОГО курса —
+    иначе методист — владелец курса A мог бы подсунуть item_id из курса B
+    (к которому у него нет доступа) в preview-эндпоинт и получить его
+    правильный ответ."""
+    version = get_draft_version(db, course_id)
+    item = db.query(LearningItem).filter(
+        LearningItem.id == item_id, LearningItem.course_version_id == version.id,
+    ).first()
+    if not item:
+        raise HTTPException(status_code=404, detail="Элемент не найден в черновике этого курса")
+    return item
+
+
+def preview_check_oge_answer(db: Session, course_id: int, item_id: int, answer: str) -> bool:
+    """Проверка ответа ОГЭ для предпросмотра — НИЧЕГО не пишет в базу (ни
+    OgeAttempt, ни прогресс), в отличие от submit_oge_attempt."""
+    item = _get_draft_item_for_preview(db, course_id, item_id)
+    if item.type != LearningItemType.OGE_TASK:
+        raise HTTPException(status_code=404, detail="Задание ОГЭ не найдено")
+    return check_oge_answer(item.oge_answer or {}, str(answer))
+
+
+def preview_check_quiz_answer(db: Session, course_id: int, item_id: int, answers: list[list[int]]) -> float:
+    """Проверка теста для предпросмотра — НИЧЕГО не пишет в базу, в отличие
+    от submit_quiz_attempt."""
+    item = _get_draft_item_for_preview(db, course_id, item_id)
+    if item.type != LearningItemType.QUIZ:
+        raise HTTPException(status_code=404, detail="Тест не найден")
+    return _score_quiz_attempt(item.quiz_questions or [], answers)
+
+
 def mark_content_item_completed(db: Session, user_id: int, item: LearningItem) -> None:
     """Отмечает материал пройденным — по явному действию ученика (кнопка
     "Дальше"/"Изучено"/"Отметить выполненным" на фронте), не просто по факту
