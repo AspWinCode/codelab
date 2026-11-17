@@ -28,6 +28,9 @@ from app.schemas import (
     CourseUpdate,
     CourseValidationOut,
     EnvironmentOut,
+    ImportPreviewOut,
+    ImportResultOut,
+    ImportRowOut,
     LearningItemArchiveIn,
     LearningItemCreate,
     LearningItemOut,
@@ -50,6 +53,7 @@ from app.schemas import (
 from app.security import verify_lms_signature
 from app.services import admin_status, analytics, course_admin, project_admin
 from app.services.course_validator import validate_course_before_publish
+from app.services.task_import import import_tasks, mark_duplicates, parse_import_file
 from app.services.environments import list_environments
 from app.services.progress_calc import apply_manual_grade
 from app.services.project_files import project_file_path
@@ -286,6 +290,54 @@ async def publish_course(course_id: int, db: Session = Depends(get_db), staff: U
             detail={"valid": False, "errors": [e.__dict__ for e in errors], "warnings": []},
         )
     return await course_admin.publish_course(db, course_id, actor_id=staff.id)
+
+
+@router.post("/courses/{course_id}/import-tasks/preview", response_model=ImportPreviewOut)
+async def preview_import_tasks(
+    course_id: int, file: UploadFile = FastAPIFile(...),
+    db: Session = Depends(get_db), staff: User = Depends(resolve_staff_user),
+):
+    """Этап 8 (ТЗ): разбор CSV/XLSX без создания элементов — методист видит
+    ошибки и дубликаты до подтверждения (POST .../import-tasks ниже)."""
+    course_admin.ensure_course_owner(course_admin.get_course_or_404(db, course_id), staff)
+    data = await file.read()
+    rows = parse_import_file(file.filename or "", data)
+    mark_duplicates(db, course_id, rows)
+    return ImportPreviewOut(
+        rows=[ImportRowOut(line=r.line, title=r.title, module=r.module, errors=r.errors, duplicate=r.duplicate, valid=r.valid) for r in rows],
+        valid_count=sum(1 for r in rows if r.valid and not r.duplicate),
+        error_count=sum(1 for r in rows if not r.valid),
+        duplicate_count=sum(1 for r in rows if r.duplicate),
+    )
+
+
+@router.post("/courses/{course_id}/import-tasks", response_model=ImportResultOut)
+async def do_import_tasks(
+    course_id: int, file: UploadFile = FastAPIFile(...), publish: bool = Query(False),
+    db: Session = Depends(get_db), staff: User = Depends(resolve_staff_user),
+):
+    """Этап 8 (ТЗ): создаёт задания ОГЭ из валидных, не дублирующихся строк.
+    publish=false (по умолчанию) — "Создать как черновик": задания остаются
+    неопубликованными, как любая другая правка методиста. publish=true —
+    "Создать и опубликовать": сразу вызывает publish_course, который
+    (см. Этап 4) сам откажет 422, если черновик в целом невалиден —
+    например, другое, не связанное с импортом задание осталось без ответа."""
+    course_admin.ensure_course_owner(course_admin.get_course_or_404(db, course_id), staff)
+    data = await file.read()
+    rows = parse_import_file(file.filename or "", data)
+    mark_duplicates(db, course_id, rows)
+    result = import_tasks(db, course_id, rows, actor_id=staff.id)
+
+    if publish:
+        errors = validate_course_before_publish(db, course_id)
+        if errors:
+            raise HTTPException(
+                status_code=422,
+                detail={"valid": False, "errors": [e.__dict__ for e in errors], "warnings": [], "import_result": result},
+            )
+        await course_admin.publish_course(db, course_id, actor_id=staff.id)
+
+    return ImportResultOut(**result, published=publish)
 
 
 @router.post("/courses/{course_id}/unpublish", response_model=CourseOut)

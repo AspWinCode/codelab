@@ -702,3 +702,30 @@ class EnvironmentOut(BaseModel):
     allowed_libraries: List[str]
     status: str  # ready | beta
     status_note: str
+
+
+class ImportRowOut(BaseModel):
+    """Этап 8 (ТЗ): одна строка импорта заданий ОГЭ из CSV/XLSX — для
+    предпросмотра до создания (app/services/task_import.py)."""
+
+    line: int
+    title: str
+    module: str
+    errors: List[str]
+    duplicate: bool
+    valid: bool
+
+
+class ImportPreviewOut(BaseModel):
+    rows: List[ImportRowOut]
+    valid_count: int
+    error_count: int
+    duplicate_count: int
+
+
+class ImportResultOut(BaseModel):
+    created: int
+    skipped_invalid: int
+    skipped_duplicate: int
+    total_rows: int
+    published: bool
