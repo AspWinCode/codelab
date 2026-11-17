@@ -57,6 +57,42 @@ export interface InitialCodeResolution {
   source: 'local' | 'server' | 'template';
 }
 
+// Этап 6 (ТЗ) — сохранение введённого (но ещё не отправленного) ответа ОГЭ
+// при обновлении страницы. В отличие от кода задач, у ответа ОГЭ нет
+// серверного черновика (Draft — только для problem_revision_id) — localStorage
+// здесь единственный источник, поэтому очищаем его сразу после успешной
+// отправки (см. OgeTaskView в CoursePage.tsx), а не ждём синхронизации с сервером.
+const OGE_ANSWER_PREFIX = 'codelab:oge-answer';
+
+function ogeAnswerKey(userId: number | null, itemId: number): string {
+  return `${OGE_ANSWER_PREFIX}:${userId ?? 'anon'}:${itemId}`;
+}
+
+export function readLocalOgeAnswer(userId: number | null, itemId: number): string {
+  try {
+    return localStorage.getItem(ogeAnswerKey(userId, itemId)) || '';
+  } catch {
+    return '';
+  }
+}
+
+export function writeLocalOgeAnswer(userId: number | null, itemId: number, answer: string): void {
+  try {
+    if (answer) localStorage.setItem(ogeAnswerKey(userId, itemId), answer);
+    else localStorage.removeItem(ogeAnswerKey(userId, itemId));
+  } catch {
+    // приватный режим/квота — не критично, просто не переживёт обновление страницы
+  }
+}
+
+export function clearLocalOgeAnswer(userId: number | null, itemId: number): void {
+  try {
+    localStorage.removeItem(ogeAnswerKey(userId, itemId));
+  } catch {
+    // см. writeLocalOgeAnswer
+  }
+}
+
 export function resolveInitialCode(params: {
   userId: number | null;
   problemRevisionId: number;

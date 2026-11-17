@@ -1,7 +1,7 @@
 import { AttachFile, CheckCircle, CloseFullscreen, ContentCopy, ExpandLess, ExpandMore, FolderOutlined, Lock, OpenInFull, RadioButtonUnchecked } from '@mui/icons-material';
 import {
   Alert, Box, Button, Checkbox, Chip, Container, Divider, Drawer, FormControlLabel,
-  FormGroup, IconButton, List, ListItem, ListItemButton, ListItemIcon, ListItemText, Paper, Stack, TextField, Tooltip, Typography,
+  FormGroup, IconButton, LinearProgress, List, ListItem, ListItemButton, ListItemIcon, ListItemText, Paper, Stack, TextField, Tooltip, Typography,
 } from '@mui/material';
 import { SyntheticEvent, useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
@@ -9,7 +9,9 @@ import { api, LearningItemTree, OgeAttempt, ProblemForStudent, ProjectSubmission
 import CodeEditor from '../components/CodeEditor';
 import Layout from '../components/Layout';
 import { FONT_CODE } from '../theme';
-import { clearLocalDraft, resolveInitialCode, writeLocalDraft } from '../utils/draftStorage';
+import {
+  clearLocalDraft, clearLocalOgeAnswer, readLocalOgeAnswer, resolveInitialCode, writeLocalDraft, writeLocalOgeAnswer,
+} from '../utils/draftStorage';
 import { renderContentHtml } from '../utils/renderContent';
 
 const DRAFT_SAVE_DEBOUNCE_MS = 1200;
@@ -663,15 +665,26 @@ function QuizView({ item, onSubmitted, courseId, preview }: {
   );
 }
 
-function OgeTaskView({ item, onSubmitted, courseId, preview }: {
-  item: LearningItemTree; onSubmitted: () => void; courseId: number; preview?: boolean;
+const OGE_AUTO_ADVANCE_DELAY_MS = 1200;
+
+interface OgeModuleProgress { title: string; completed: number; total: number; percent: number }
+
+function OgeTaskView({ item, onSubmitted, courseId, preview, meId, navIndex, navTotal, hasPrevious, hasNext, onPrevious, onNext, moduleProgress }: {
+  item: LearningItemTree; onSubmitted: () => void; courseId: number; preview?: boolean; meId: number | null;
+  navIndex: number; navTotal: number; hasPrevious: boolean; hasNext: boolean;
+  onPrevious: () => void; onNext: () => void; moduleProgress: OgeModuleProgress | null;
 }) {
-  const [answer, setAnswer] = useState('');
+  // Этап 6 (ТЗ) — введённый, но ещё не отправленный ответ переживает
+  // обновление страницы (localStorage, см. utils/draftStorage.ts); в
+  // предпросмотре черновиков быть не может — у draft-элемента свой id на
+  // каждую публикацию, хранить их локально смысла нет.
+  const [answer, setAnswer] = useState(() => (preview ? '' : readLocalOgeAnswer(meId, item.id)));
   const [file, setFile] = useState<File | null>(null);
   const [result, setResult] = useState<{ score: number } | null>(null);
   const [lastAttempt, setLastAttempt] = useState<OgeAttempt | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
+  const autoAdvanceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     // Этап 5 (ТЗ): в предпросмотре попытки не сохраняются — у черновика их
@@ -680,8 +693,17 @@ function OgeTaskView({ item, onSubmitted, courseId, preview }: {
     api.myOgeAttempts(item.id).then((items) => setLastAttempt(items[0] || null)).catch(() => {});
   }, [item.id, preview]);
 
+  useEffect(() => () => {
+    if (autoAdvanceTimer.current) clearTimeout(autoAdvanceTimer.current);
+  }, [item.id]);
+
+  const changeAnswer = (value: string) => {
+    setAnswer(value);
+    if (!preview) writeLocalOgeAnswer(meId, item.id, value);
+  };
+
   const submit = async () => {
-    if (!answer.trim()) return;
+    if (!answer.trim() || submitting) return;
     setSubmitting(true);
     setError('');
     try {
@@ -694,6 +716,14 @@ function OgeTaskView({ item, onSubmitted, courseId, preview }: {
         setLastAttempt(attempt);
         setFile(null);
         onSubmitted();
+        if (attempt.score === 100) {
+          clearLocalOgeAnswer(meId, item.id);
+          // Автопереход к следующему заданию после верного ответа — только
+          // если оно есть и не заблокировано (hasNext это уже учитывает).
+          if (hasNext) {
+            autoAdvanceTimer.current = setTimeout(onNext, OGE_AUTO_ADVANCE_DELAY_MS);
+          }
+        }
       }
     } catch (e: any) {
       setError(e.message);
@@ -708,7 +738,21 @@ function OgeTaskView({ item, onSubmitted, courseId, preview }: {
   return (
     <Container maxWidth="md" sx={{ py: 4 }}>
       <Box className="oge-task-card">
-        <Typography variant="h2" sx={{ mb: 2 }}>Задача №{item.position + 1}</Typography>
+        <Stack direction={{ xs: 'column', sm: 'row' }} justifyContent="space-between" alignItems={{ sm: 'center' }} spacing={0.5} sx={{ mb: 1 }}>
+          <Typography variant="h2">Задача №{item.position + 1}</Typography>
+          {navTotal > 0 && (
+            <Typography variant="body2" color="text.secondary">Задание {navIndex + 1} из {navTotal}</Typography>
+          )}
+        </Stack>
+        {moduleProgress && (
+          <Box sx={{ mb: 2 }}>
+            <Stack direction="row" justifyContent="space-between" sx={{ mb: 0.5 }}>
+              <Typography variant="caption" color="text.secondary">{moduleProgress.title}</Typography>
+              <Typography variant="caption" color="text.secondary">{moduleProgress.completed} / {moduleProgress.total}</Typography>
+            </Stack>
+            <LinearProgress variant="determinate" value={moduleProgress.percent} />
+          </Box>
+        )}
         {statementIsHtml ? (
           <Box
             className="preview oge-task-statement"
@@ -720,7 +764,13 @@ function OgeTaskView({ item, onSubmitted, courseId, preview }: {
           </Typography>
         )}
         {error && <Alert severity="error" sx={{ mt: 2 }}>{error}</Alert>}
-        {result && <Alert severity={result.score === 100 ? 'success' : 'error'} sx={{ mt: 2 }}>{result.score === 100 ? 'Ответ верный' : 'Ответ неверный. Попробуйте ещё раз.'}</Alert>}
+        {result && (
+          <Alert severity={result.score === 100 ? 'success' : 'error'} sx={{ mt: 2 }}>
+            {result.score === 100
+              ? (hasNext ? 'Ответ верный. Переходим к следующему заданию…' : 'Ответ верный')
+              : 'Ответ неверный. Попробуйте ещё раз.'}
+          </Alert>
+        )}
         {!result && lastAttempt && <Typography variant="body2" color="text.secondary" sx={{ mt: 2 }}>Последняя попытка: {lastAttempt.score === 100 ? 'верно' : 'неверно'}</Typography>}
         {!result && lastAttempt?.file_original_filename && (
           <Typography variant="body2" sx={{ mt: 0.5 }}>
@@ -730,13 +780,20 @@ function OgeTaskView({ item, onSubmitted, courseId, preview }: {
         )}
         <Paper className="oge-answer-panel" elevation={0}>
           <Typography sx={{ mr: 1 }}>Ответ:</Typography>
-          <TextField size="small" value={answer} onChange={(e) => setAnswer(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') submit(); }} inputProps={{ inputMode: 'decimal', 'aria-label': 'Ответ' }} />
-          <Button variant="contained" onClick={submit} disabled={submitting || !answer.trim()} sx={{ ml: 1 }}>Проверить</Button>
+          <TextField
+            size="small" value={answer} onChange={(e) => changeAnswer(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter') submit(); }}
+            disabled={submitting}
+            inputProps={{ inputMode: 'decimal', 'aria-label': 'Ответ' }}
+          />
+          <Button variant="contained" onClick={submit} disabled={submitting || !answer.trim()} sx={{ ml: 1 }}>
+            {submitting ? 'Проверяем…' : 'Проверить'}
+          </Button>
         </Paper>
         {!preview && (
           <>
             <Stack direction="row" spacing={1} alignItems="center" sx={{ mt: 1.5 }}>
-              <Button component="label" size="small" variant="outlined" startIcon={<AttachFile fontSize="small" />}>
+              <Button component="label" size="small" variant="outlined" startIcon={<AttachFile fontSize="small" />} disabled={submitting}>
                 {file ? 'Заменить файл' : 'Прикрепить файл'}
                 <input type="file" hidden onChange={(e) => setFile(e.target.files?.[0] || null)} />
               </Button>
@@ -751,6 +808,13 @@ function OgeTaskView({ item, onSubmitted, courseId, preview }: {
               Файл необязателен и не проверяется автоматически — например, фото решения на бумаге (jpg, png, webp, pdf).
             </Typography>
           </>
+        )}
+
+        {navTotal > 0 && (
+          <Stack direction={{ xs: 'column', sm: 'row' }} justifyContent="space-between" spacing={1.5} sx={{ mt: 3 }}>
+            <Button variant="outlined" disabled={!hasPrevious} onClick={onPrevious}>Предыдущее задание</Button>
+            <Button variant="outlined" disabled={!hasNext} onClick={onNext}>Следующее задание</Button>
+          </Stack>
         )}
       </Box>
     </Container>
@@ -1211,6 +1275,38 @@ export default function CoursePage({ preview = false }: { preview?: boolean }) {
     ? navigationItems[lectureIndex + 1]
     : null;
 
+  // Этап 6 (ТЗ) — навигация «следующее/предыдущее задание» и индикатор
+  // "Задание N из M" для заданий ОГЭ, по аналогии с лекциями выше. Порядок
+  // считается по всему дереву курса (document order из flatten), а не
+  // только по текущему модулю — так ученик видит сквозной прогресс по
+  // всему банку заданий ОГЭ.
+  const ogeTaskItems = flatten(tree).filter((item) => item.type === 'oge_task');
+  const ogeTaskIndex = selected?.type === 'oge_task'
+    ? ogeTaskItems.findIndex((item) => item.id === selected.id)
+    : -1;
+  const previousOgeTask = ogeTaskIndex > 0 ? ogeTaskItems[ogeTaskIndex - 1] : null;
+  const nextOgeTask = ogeTaskIndex >= 0 && ogeTaskIndex < ogeTaskItems.length - 1
+    ? ogeTaskItems[ogeTaskIndex + 1]
+    : null;
+
+  // Прогресс по текущему модулю (родитель типа "module" по цепочке parent_id) —
+  // доля пройденных обязательных элементов внутри него, не всего курса.
+  const itemsById = new Map(flatten(tree).map((item) => [item.id, item]));
+  const moduleProgress = (() => {
+    if (!selected) return null;
+    let node: LearningItemTree | undefined = itemsById.get(selected.id);
+    while (node && node.type !== 'module') {
+      node = node.parent_id != null ? itemsById.get(node.parent_id) : undefined;
+    }
+    if (!node) return null;
+    const collectRequiredLeaves = (n: LearningItemTree): LearningItemTree[] =>
+      n.children.length === 0 ? (n.is_required ? [n] : []) : n.children.flatMap(collectRequiredLeaves);
+    const leaves = collectRequiredLeaves(node);
+    if (leaves.length === 0) return null;
+    const completedCount = leaves.filter((l) => l.completed).length;
+    return { title: node.title, completed: completedCount, total: leaves.length, percent: Math.round(100 * completedCount / leaves.length) };
+  })();
+
   const moveLecture = async (target: LearningItemTree, completeCurrent: boolean) => {
     if (!selected || lectureNavigationBusy) return;
     setLectureNavigationBusy(true);
@@ -1285,7 +1381,21 @@ export default function CoursePage({ preview = false }: { preview?: boolean }) {
           ) : selected && selected.type === 'project' && selected.embed_editor === 'turtle' && !preview ? (
             <TurtleProjectView key={selected.id} item={selected} />
           ) : selected && selected.type === 'oge_task' ? (
-            <OgeTaskView key={selected.id} item={selected} onSubmitted={refreshTreeAndSelected} courseId={Number(courseId)} preview={preview} />
+            <OgeTaskView
+              key={selected.id}
+              item={selected}
+              onSubmitted={refreshTreeAndSelected}
+              courseId={Number(courseId)}
+              preview={preview}
+              meId={meId}
+              navIndex={ogeTaskIndex}
+              navTotal={ogeTaskItems.length}
+              hasPrevious={!!previousOgeTask}
+              hasNext={!!nextOgeTask && nextOgeTask.unlocked}
+              onPrevious={() => previousOgeTask && moveLecture(previousOgeTask, false)}
+              onNext={() => nextOgeTask && moveLecture(nextOgeTask, false)}
+              moduleProgress={moduleProgress}
+            />
           ) : selected && selected.type === 'quiz' ? (
             <QuizView key={selected.id} item={selected} onSubmitted={refreshTreeAndSelected} courseId={Number(courseId)} preview={preview} />
           ) : selected && selected.type === 'task' && preview ? (
