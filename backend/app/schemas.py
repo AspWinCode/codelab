@@ -704,6 +704,48 @@ class EnvironmentOut(BaseModel):
     status_note: str
 
 
+class BulkEditIn(BaseModel):
+    """Этап 9 (ТЗ) — массовое редактирование. Какие из required/weight/
+    max_attempts/parent_id/target_course_id нужны, зависит от operation —
+    см. app/routers/lms_admin.py::bulk_edit_items."""
+
+    item_ids: List[int]
+    operation: str  # archive|unarchive|delete|set_required|set_weight|set_max_attempts|move|copy_to_course
+    required: Optional[bool] = None
+    weight: Optional[float] = None
+    max_attempts: Optional[int] = None
+    parent_id: Optional[int] = None
+    target_course_id: Optional[int] = None
+
+    @field_validator("operation")
+    @classmethod
+    def _validate_operation(cls, v: str) -> str:
+        allowed = {"archive", "unarchive", "delete", "set_required", "set_weight", "set_max_attempts", "move", "copy_to_course"}
+        if v not in allowed:
+            raise ValueError(f"Неизвестная операция: {v}")
+        return v
+
+    @field_validator("item_ids")
+    @classmethod
+    def _validate_item_ids(cls, v: List[int]) -> List[int]:
+        if not v:
+            raise ValueError("item_ids не может быть пустым")
+        return v
+
+
+class BulkEditItemResultOut(BaseModel):
+    item_id: int
+    ok: bool
+    error: Optional[str] = None
+
+
+class BulkEditOut(BaseModel):
+    operation: str
+    results: List[BulkEditItemResultOut]
+    succeeded: int
+    failed: int
+
+
 class ImportRowOut(BaseModel):
     """Этап 8 (ТЗ): одна строка импорта заданий ОГЭ из CSV/XLSX — для
     предпросмотра до создания (app/services/task_import.py)."""

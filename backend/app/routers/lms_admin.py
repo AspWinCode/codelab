@@ -21,6 +21,9 @@ from app.schemas import (
     AdminSystemStatusOut,
     AdminUserBlockIn,
     AdminUserOut,
+    BulkEditIn,
+    BulkEditItemResultOut,
+    BulkEditOut,
     CourseAnalyticsOut,
     CourseArchiveIn,
     CourseCreate,
@@ -51,7 +54,7 @@ from app.schemas import (
     UploadOut,
 )
 from app.security import verify_lms_signature
-from app.services import admin_status, analytics, course_admin, project_admin
+from app.services import admin_status, analytics, bulk_edit, course_admin, project_admin
 from app.services.course_validator import validate_course_before_publish
 from app.services.task_import import import_tasks, mark_duplicates, parse_import_file
 from app.services.environments import list_environments
@@ -338,6 +341,64 @@ async def do_import_tasks(
         await course_admin.publish_course(db, course_id, actor_id=staff.id)
 
     return ImportResultOut(**result, published=publish)
+
+
+@router.post("/courses/{course_id}/items/bulk", response_model=BulkEditOut)
+def bulk_edit_items(
+    course_id: int, payload: BulkEditIn,
+    db: Session = Depends(get_db), staff: User = Depends(resolve_staff_user),
+):
+    """Этап 9 (ТЗ) — массовое редактирование. "Изменить тип" сознательно не
+    реализовано (см. app/services/bulk_edit.py)."""
+    course_admin.ensure_course_owner(course_admin.get_course_or_404(db, course_id), staff)
+
+    if payload.operation == "archive":
+        results = bulk_edit.bulk_archive(db, course_id, payload.item_ids, True)
+    elif payload.operation == "unarchive":
+        results = bulk_edit.bulk_archive(db, course_id, payload.item_ids, False)
+    elif payload.operation == "delete":
+        results = bulk_edit.bulk_delete(db, course_id, payload.item_ids)
+    elif payload.operation == "set_required":
+        if payload.required is None:
+            raise HTTPException(status_code=422, detail="Для set_required нужно поле required")
+        results = bulk_edit.bulk_set_required(db, course_id, payload.item_ids, payload.required)
+    elif payload.operation == "set_weight":
+        if payload.weight is None:
+            raise HTTPException(status_code=422, detail="Для set_weight нужно поле weight")
+        results = bulk_edit.bulk_set_weight(db, course_id, payload.item_ids, payload.weight)
+    elif payload.operation == "set_max_attempts":
+        results = bulk_edit.bulk_set_max_attempts(db, course_id, payload.item_ids, payload.max_attempts)
+    elif payload.operation == "move":
+        if "parent_id" not in payload.model_fields_set:
+            raise HTTPException(status_code=422, detail="Для move нужно поле parent_id (null — перенести в корень курса)")
+        results = bulk_edit.bulk_move(db, course_id, payload.item_ids, payload.parent_id)
+    elif payload.operation == "copy_to_course":
+        if payload.target_course_id is None:
+            raise HTTPException(status_code=422, detail="Для copy_to_course нужно поле target_course_id")
+        course_admin.ensure_course_owner(course_admin.get_course_or_404(db, payload.target_course_id), staff)
+        results = bulk_edit.bulk_copy_to_course(db, course_id, payload.item_ids, payload.target_course_id)
+    else:
+        # Недостижимо — BulkEditIn.operation уже проверен Pydantic-валидатором.
+        raise HTTPException(status_code=422, detail=f"Неизвестная операция: {payload.operation}")
+
+    out = [BulkEditItemResultOut(item_id=r.item_id, ok=r.ok, error=r.error) for r in results]
+    return BulkEditOut(
+        operation=payload.operation, results=out,
+        succeeded=sum(1 for r in out if r.ok), failed=sum(1 for r in out if not r.ok),
+    )
+
+
+@router.get("/courses/{course_id}/items/export", response_model=list[LearningItemOut])
+def export_items(
+    course_id: int, item_ids: list[int] = Query(...),
+    db: Session = Depends(get_db), staff: User = Depends(resolve_staff_user),
+):
+    """Этап 9 (ТЗ) — "экспортировать": снимок выбранных элементов черновика
+    в JSON (порядок — как в item_ids, отсутствующие/чужие id молча
+    пропускаются, как и в bulk_edit)."""
+    course_admin.ensure_course_owner(course_admin.get_course_or_404(db, course_id), staff)
+    by_id = bulk_edit.items_in_draft(db, course_id, item_ids)
+    return [by_id[i] for i in item_ids if i in by_id]
 
 
 @router.post("/courses/{course_id}/unpublish", response_model=CourseOut)
