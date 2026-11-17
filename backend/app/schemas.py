@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import List, Optional, Union
+from typing import Any, List, Optional, Union
 
 from pydantic import BaseModel, ConfigDict, field_validator, model_validator
 
@@ -702,6 +702,47 @@ class EnvironmentOut(BaseModel):
     allowed_libraries: List[str]
     status: str  # ready | beta
     status_note: str
+
+
+class FieldChangeOut(BaseModel):
+    field: str
+    old_value: Any = None
+    new_value: Any = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class ItemChangeOut(BaseModel):
+    item_id: int
+    title: str
+    type: str
+    fields: List[FieldChangeOut]
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class ItemRefOut(BaseModel):
+    item_id: int
+    title: str
+    type: str
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class ChangeSetOut(BaseModel):
+    """Этап 10 (ТЗ): один элемент истории изменений курса — диф между двумя
+    последовательными опубликованными версиями (= одна правка методиста,
+    т.к. публикация здесь автоматическая после каждой правки — см.
+    app/services/course_changes.py)."""
+
+    version_number: int
+    published_at: Optional[datetime]
+    author: Optional[str]
+    added: List[ItemRefOut]
+    removed: List[ItemRefOut]
+    changed: List[ItemChangeOut]
+
+    model_config = ConfigDict(from_attributes=True)
 
 
 class BulkEditIn(BaseModel):

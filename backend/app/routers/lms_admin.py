@@ -24,6 +24,7 @@ from app.schemas import (
     BulkEditIn,
     BulkEditItemResultOut,
     BulkEditOut,
+    ChangeSetOut,
     CourseAnalyticsOut,
     CourseArchiveIn,
     CourseCreate,
@@ -55,6 +56,7 @@ from app.schemas import (
 )
 from app.security import verify_lms_signature
 from app.services import admin_status, analytics, bulk_edit, course_admin, project_admin
+from app.services.course_changes import get_course_changes
 from app.services.course_validator import validate_course_before_publish
 from app.services.task_import import import_tasks, mark_duplicates, parse_import_file
 from app.services.environments import list_environments
@@ -270,6 +272,16 @@ def archive_course(
 def delete_course(course_id: int, db: Session = Depends(get_db), staff: User = Depends(resolve_staff_user)):
     course_admin.ensure_course_owner(course_admin.get_course_or_404(db, course_id), staff)
     course_admin.delete_course(db, course_id)
+
+
+@router.get("/courses/{course_id}/changes", response_model=list[ChangeSetOut])
+def get_changes(course_id: int, db: Session = Depends(get_db), staff: User = Depends(resolve_staff_user)):
+    """Этап 10 (ТЗ): история изменений курса — диф между последовательными
+    опубликованными версиями, самые свежие первыми (см.
+    app/services/course_changes.py — почему не "черновик против активной")."""
+    if staff.role == "methodist":
+        course_admin.ensure_course_owner(course_admin.get_course_or_404(db, course_id), staff)
+    return get_course_changes(db, course_id)
 
 
 @router.get("/courses/{course_id}/validation", response_model=CourseValidationOut)
