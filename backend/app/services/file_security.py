@@ -47,6 +47,7 @@ _SIGNATURES: dict[str, tuple[bytes, ...]] = {
     "docx": (b"PK\x03\x04",),
     "xlsx": (b"PK\x03\x04",),
     "pptx": (b"PK\x03\x04",),
+    "ods": (b"PK\x03\x04",),
     "doc": (b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1",),  # общий OLE2-контейнер — тот же у .xls/.ppt
     "xls": (b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1",),
     "ppt": (b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1",),

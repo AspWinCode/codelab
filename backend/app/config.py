@@ -48,7 +48,7 @@ class Settings(BaseSettings):
     upload_allowed_video_ext: str = "mp4,webm,mov"
     # Материалы лекций и вложения к задачам — офисные документы и архивы тоже
     # должны проходить через тот же HMAC admin-API, которым пользуется LMS.
-    upload_allowed_document_ext: str = "pdf,doc,docx,ppt,pptx,xls,xlsx,rar,zip,7z,txt,csv,rtf"
+    upload_allowed_document_ext: str = "pdf,doc,docx,ppt,pptx,xls,xlsx,ods,rar,zip,7z,txt,csv,rtf"
     upload_allowed_audio_ext: str = "mp3,wav"
 
     # Файлы проектов (PRJ): исходный код и сопутствующие материалы ученика —
