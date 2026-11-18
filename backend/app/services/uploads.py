@@ -9,6 +9,7 @@ from fastapi import HTTPException
 
 from app.config import settings
 from app.schemas import UploadOut
+from app.services.file_security import has_shebang, is_compiled_binary, matches_extension
 
 UPLOADS_ROOT = Path(settings.uploads_dir)
 UPLOADS_ROOT.mkdir(parents=True, exist_ok=True)
@@ -30,6 +31,14 @@ async def save_upload(filename: str, read_chunk) -> UploadOut:
         raise HTTPException(status_code=413, detail=f"Файл больше {max_size // (1024 * 1024)} МБ")
     if len(data) == 0:
         raise HTTPException(status_code=422, detail="Пустой файл")
+
+    # Этап 11 (ТЗ): MIME по содержимому, не по расширению — ни картинка, ни
+    # документ не должны оказаться исполняемым файлом или скриптом под
+    # чужим расширением.
+    if is_compiled_binary(data) or has_shebang(data):
+        raise HTTPException(status_code=422, detail="Файл похож на исполняемый — такие загрузки запрещены")
+    if not matches_extension(data, ext):
+        raise HTTPException(status_code=422, detail=f"Содержимое файла не похоже на формат .{ext}")
 
     # Безопасное имя — случайное, не то, что прислал клиент (SEC-005/SEC-006:
     # без этого можно было бы получить путь вида "../../app/main.py").

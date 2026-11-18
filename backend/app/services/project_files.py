@@ -10,6 +10,7 @@ from pathlib import Path
 from fastapi import HTTPException
 
 from app.config import settings
+from app.services.file_security import is_compiled_binary, matches_extension
 
 PROJECT_UPLOADS_ROOT = Path(settings.project_uploads_dir)
 PROJECT_UPLOADS_ROOT.mkdir(parents=True, exist_ok=True)
@@ -38,6 +39,15 @@ async def save_project_file(filename: str, content_type: str, read_chunk) -> Sav
         raise HTTPException(status_code=413, detail=f"Файл больше {max_size // (1024 * 1024)} МБ")
     if len(data) == 0:
         raise HTTPException(status_code=422, detail="Пустой файл")
+
+    # Этап 11 (ТЗ): компилированный бинарник не должен проходить под любым
+    # расширением (включая .zip с архивом исходников). Шебанг (#!) здесь
+    # намеренно НЕ проверяется — allowlist включает .py/.sh/.rb/.php и т.п.,
+    # где шебанг в первой строке — обычное дело, а не признак атаки.
+    if is_compiled_binary(data):
+        raise HTTPException(status_code=422, detail="Файл похож на исполняемый — такие загрузки запрещены")
+    if not matches_extension(data, ext):
+        raise HTTPException(status_code=422, detail=f"Содержимое файла не похоже на формат .{ext}")
 
     # Случайное имя на диске — не то, что прислал ученик (SEC-005/SEC-006,
     # как services/uploads.py::save_upload).

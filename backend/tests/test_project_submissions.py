@@ -10,6 +10,7 @@ from datetime import datetime, timedelta, timezone
 
 from app.config import settings
 from app.models import (
+    AuditEvent,
     Course,
     CourseVersion,
     Enrollment,
@@ -301,6 +302,28 @@ def test_student_cannot_download_others_file(client, db_session):
     as_user(client, other)
     resp = client.get(f"/api/projects/files/{file_id}/download")
     assert resp.status_code == 403
+
+
+def test_downloading_own_file_is_logged(client, db_session):
+    """Этап 11 (ТЗ) — логирование скачиваний приватных файлов."""
+    course, version, item = _make_published_project(db_session)
+    student = make_user(db_session, "student", "lp-student-9")
+    _enroll(db_session, student, course, version)
+    as_user(client, student)
+
+    file_id = client.post(
+        f"/api/projects/items/{item.id}/files", files={"file": ("a.py", io.BytesIO(b"1"), "text/x-python")},
+    ).json()["id"]
+
+    resp = client.get(f"/api/projects/files/{file_id}/download")
+    assert resp.status_code == 200
+
+    event = db_session.query(AuditEvent).filter(AuditEvent.action == "file_download").first()
+    assert event is not None
+    assert event.object_type == "project_file"
+    assert event.object_id == file_id
+    assert event.actor_id == student.id
+    assert event.meta["filename"] == "a.py"
 
 
 def _capture_webhook_calls(monkeypatch):

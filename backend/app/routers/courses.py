@@ -158,6 +158,7 @@ def download_oge_attempt_file(attempt_id: int, db: Session = Depends(get_db), us
     path = oge_file_path(attempt.file_stored_name)
     if not path.exists():
         raise HTTPException(status_code=404, detail="Файл не найден на диске")
+    course_admin.log_file_download(db, user.id, "oge_attempt_file", attempt.id, attempt.file_original_filename or "file")
     return FileResponse(path, media_type=attempt.file_content_type or "application/octet-stream", filename=attempt.file_original_filename or "file")
 
 

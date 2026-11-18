@@ -53,6 +53,17 @@ from app.services.project_files import SavedProjectFile  # общий тип "с
 from app.services.tree_rules import validate_parent
 
 
+def log_file_download(db: Session, actor_id: Optional[int], object_type: str, object_id: int, filename: str) -> None:
+    """Этап 11 (ТЗ) — "логировать скачивания" приватных файлов (сдачи
+    проектов, фото к ОГЭ). Переиспользует AuditEvent — отдельная таблица для
+    одного только этого факта была бы избыточна."""
+    db.add(AuditEvent(
+        actor_id=actor_id, action="file_download", object_type=object_type, object_id=object_id,
+        meta={"filename": filename},
+    ))
+    db.commit()
+
+
 def get_course_or_404(db: Session, course_id: int) -> Course:
     course = db.query(Course).filter(Course.id == course_id).first()
     if not course:

@@ -533,6 +533,7 @@ def download_project_file(
     path = project_file_path(f.stored_name)
     if not path.exists():
         raise HTTPException(status_code=404, detail="Файл не найден на диске")
+    course_admin.log_file_download(db, staff.id, "project_file", f.id, f.original_filename)
     return FileResponse(path, media_type=f.content_type, filename=f.original_filename)
 
 

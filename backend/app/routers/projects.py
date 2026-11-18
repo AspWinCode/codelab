@@ -9,7 +9,7 @@ from app.database import get_db
 from app.deps import get_current_user
 from app.models import ProjectSubmission, User
 from app.schemas import ProjectFileOut, ProjectSubmissionOut
-from app.services import project_admin
+from app.services import course_admin, project_admin
 from app.services.project_files import project_file_path
 
 router = APIRouter()
@@ -64,4 +64,5 @@ def download_file(file_id: int, db: Session = Depends(get_db), user: User = Depe
     path = project_file_path(f.stored_name)
     if not path.exists():
         raise HTTPException(status_code=404, detail="Файл не найден на диске")
+    course_admin.log_file_download(db, user.id, "project_file", f.id, f.original_filename)
     return FileResponse(path, media_type=f.content_type, filename=f.original_filename)

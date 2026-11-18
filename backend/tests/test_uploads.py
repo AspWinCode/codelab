@@ -29,13 +29,16 @@ def test_upload_rejects_oversized_file(client, db_session, monkeypatch):
     assert resp.status_code == 413
 
 
+PNG_MAGIC = b"\x89PNG\r\n\x1a\n" + b"fake-rest-of-png"
+
+
 def test_upload_accepts_allowed_image_and_uses_safe_name(client, db_session):
     methodist = make_user(db_session, "methodist")
     as_user(client, methodist)
 
     resp = client.post(
         "/api/uploads",
-        files={"file": ("../../etc/passwd.png", io.BytesIO(b"fake-png-bytes"), "image/png")},
+        files={"file": ("../../etc/passwd.png", io.BytesIO(PNG_MAGIC), "image/png")},
     )
     assert resp.status_code == 200
     body = resp.json()
@@ -44,7 +47,7 @@ def test_upload_accepts_allowed_image_and_uses_safe_name(client, db_session):
     # был бы path traversal через переданное имя).
     assert ".." not in body["url"]
     assert "passwd" not in body["url"]
-    assert body["size"] == len(b"fake-png-bytes")
+    assert body["size"] == len(PNG_MAGIC)
 
 
 def test_upload_requires_methodist_role(client, db_session):
