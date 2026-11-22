@@ -129,6 +129,57 @@ def get_draft_version(db: Session, course_id: int) -> CourseVersion:
     return version
 
 
+def get_draft_status(db: Session, course_id: int) -> dict:
+    """Возвращает, отличается ли текущий черновик от активной версии.
+    Сопоставление делается по source_item_id, поэтому новые ID после
+    публикации не считаются изменением сами по себе."""
+    course = get_course_or_404(db, course_id)
+    draft = get_draft_version(db, course_id)
+    active = db.query(CourseVersion).filter(CourseVersion.id == course.active_version_id).first() if course.active_version_id else None
+    if not active:
+        has_changes = db.query(LearningItem).filter(LearningItem.course_version_id == draft.id).count() > 0
+        return {"course_id": course_id, "active_version_number": None, "draft_version_number": draft.version_number, "has_unpublished_changes": has_changes}
+
+    active_items = db.query(LearningItem).filter(LearningItem.course_version_id == active.id).all()
+    draft_items = db.query(LearningItem).filter(LearningItem.course_version_id == draft.id).all()
+    active_by_id = {item.id: item for item in active_items}
+    draft_by_id = {item.id: item for item in draft_items}
+    represented_active_ids: set[int] = set()
+    comparable = (
+        "type", "title", "description", "content", "is_required", "weight", "position",
+        "unlock_rules", "problem_revision_id", "is_archived", "steps", "quiz_questions",
+        "oge_answer", "oge_max_attempts", "oge_allow_retry_after_success",
+        "oge_show_result_immediately", "oge_show_correct_answer", "due_at", "embed_editor",
+    )
+    has_changes = len(active_items) != len(draft_items)
+    for draft_item in draft_items:
+        source_id = draft_item.source_item_id
+        active_item = active_by_id.get(source_id) if source_id else None
+        if not active_item:
+            has_changes = True
+            continue
+        represented_active_ids.add(active_item.id)
+        for field in comparable:
+            if getattr(draft_item, field) != getattr(active_item, field):
+                has_changes = True
+                break
+        if draft_item.parent_id:
+            draft_parent = draft_by_id.get(draft_item.parent_id)
+            if not draft_parent or draft_parent.source_item_id != active_item.parent_id:
+                has_changes = True
+        elif active_item.parent_id is not None:
+            has_changes = True
+
+    if len(represented_active_ids) != len(active_items):
+        has_changes = True
+    return {
+        "course_id": course_id,
+        "active_version_number": active.version_number,
+        "draft_version_number": draft.version_number,
+        "has_unpublished_changes": has_changes,
+    }
+
+
 def build_tree(
     items: list[LearningItem],
     unlocked_ids: set[int] | None = None,

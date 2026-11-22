@@ -105,3 +105,58 @@ def test_foreign_methodist_cannot_edit_or_delete(client):
 
     resp = client.delete(f"/api/lms-admin/courses/{course['id']}?{other_qs}", headers={"X-LP-Signature": other_sig})
     assert resp.status_code == 403
+
+
+def test_item_mutations_can_stay_in_draft_until_publish(client, db_session):
+    """Методист может накопить несколько изменений, проверить черновик и
+    опубликовать их одной операцией. Старый publish=true по умолчанию остаётся
+    совместимым с существующим клиентом."""
+    course, qs, sig = _create_course(client)
+    module = client.post(
+        f"/api/lms-admin/courses/{course['id']}/items?{qs}&publish=false",
+        json={"type": "module", "title": "Черновик", "position": 0},
+        headers={"X-LP-Signature": sig},
+    )
+    assert module.status_code == 200, module.text
+    module_id = module.json()["id"]
+
+    child = client.post(
+        f"/api/lms-admin/courses/{course['id']}/items?{qs}&publish=false",
+        json={"type": "theory", "title": "Материал", "parent_id": module_id, "position": 0},
+        headers={"X-LP-Signature": sig},
+    )
+    assert child.status_code == 200, child.text
+
+    validation = client.get(
+        f"/api/lms-admin/courses/{course['id']}/validation?{qs}",
+        headers={"X-LP-Signature": sig},
+    )
+    assert validation.status_code == 200
+    assert validation.json()["valid"] is True
+
+    draft_status = client.get(
+        f"/api/lms-admin/courses/{course['id']}/draft-status?{qs}",
+        headers={"X-LP-Signature": sig},
+    )
+    assert draft_status.status_code == 200
+    assert draft_status.json()["has_unpublished_changes"] is True
+
+    draft = client.get(
+        f"/api/lms-admin/courses/{course['id']}/tree?{qs}",
+        headers={"X-LP-Signature": sig},
+    ).json()
+    assert draft[0]["title"] == "Черновик"
+    assert draft[0]["children"][0]["title"] == "Материал"
+
+    publish = client.post(
+        f"/api/lms-admin/courses/{course['id']}/publish?{qs}",
+        headers={"X-LP-Signature": sig},
+    )
+    assert publish.status_code == 200, publish.text
+    assert publish.json()["status"] == "published"
+
+    draft_status = client.get(
+        f"/api/lms-admin/courses/{course['id']}/draft-status?{qs}",
+        headers={"X-LP-Signature": sig},
+    )
+    assert draft_status.json()["has_unpublished_changes"] is False

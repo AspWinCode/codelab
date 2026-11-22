@@ -29,6 +29,7 @@ from app.schemas import (
     CourseArchiveIn,
     CourseCreate,
     CourseOut,
+    CourseDraftStatusOut,
     CourseUpdate,
     CourseValidationOut,
     EnvironmentOut,
@@ -160,6 +161,7 @@ def get_task(problem_revision_id: int, db: Session = Depends(get_db), staff: Use
 async def update_task(
     problem_revision_id: int,
     payload: ProblemRevisionCreate,
+    publish: bool = Query(True),
     db: Session = Depends(get_db),
     staff: User = Depends(resolve_staff_user),
 ):
@@ -170,7 +172,7 @@ async def update_task(
     _ensure_task_owner(db, problem_revision_id, staff)
     result = course_admin.update_task(db, problem_revision_id, payload)
     course = course_admin.get_course_for_task(db, problem_revision_id)
-    if course:
+    if course and publish:
         await course_admin.publish_course(db, course.id, actor_id=staff.id)
     return result
 
@@ -179,33 +181,40 @@ async def update_task(
 async def create_item(
     course_id: int,
     payload: LearningItemCreate,
+    publish: bool = Query(True),
     db: Session = Depends(get_db),
     staff: User = Depends(resolve_staff_user),
 ):
     course_admin.ensure_course_owner(course_admin.get_course_or_404(db, course_id), staff)
     result = course_admin.create_item(db, course_id, payload)
-    return await course_admin.auto_publish_item(db, course_id, result.id, actor_id=staff.id)
+    if publish:
+        return await course_admin.auto_publish_item(db, course_id, result.id, actor_id=staff.id)
+    return result
 
 
 @router.put("/items/{item_id}", response_model=LearningItemOut)
 async def update_item(
     item_id: int,
     payload: LearningItemUpdate,
+    publish: bool = Query(True),
     db: Session = Depends(get_db),
     staff: User = Depends(resolve_staff_user),
 ):
     _, course = course_admin.get_course_for_item(db, item_id)
     course_admin.ensure_course_owner(course, staff)
     result = course_admin.update_item(db, item_id, payload)
-    return await course_admin.auto_publish_item(db, course.id, result.id, actor_id=staff.id)
+    if publish:
+        return await course_admin.auto_publish_item(db, course.id, result.id, actor_id=staff.id)
+    return result
 
 
 @router.delete("/items/{item_id}")
-async def delete_item(item_id: int, db: Session = Depends(get_db), staff: User = Depends(resolve_staff_user)):
+async def delete_item(item_id: int, publish: bool = Query(True), db: Session = Depends(get_db), staff: User = Depends(resolve_staff_user)):
     _, course = course_admin.get_course_for_item(db, item_id)
     course_admin.ensure_course_owner(course, staff)
     course_admin.delete_item(db, item_id)
-    await course_admin.publish_course(db, course.id, actor_id=staff.id)
+    if publish:
+        await course_admin.publish_course(db, course.id, actor_id=staff.id)
     return {"ok": True}
 
 
@@ -213,6 +222,7 @@ async def delete_item(item_id: int, db: Session = Depends(get_db), staff: User =
 async def archive_item(
     item_id: int,
     payload: LearningItemArchiveIn,
+    publish: bool = Query(True),
     db: Session = Depends(get_db),
     staff: User = Depends(resolve_staff_user),
 ):
@@ -221,7 +231,9 @@ async def archive_item(
     _, course = course_admin.get_course_for_item(db, item_id)
     course_admin.ensure_course_owner(course, staff)
     result = course_admin.set_item_archived(db, item_id, payload.archived)
-    return await course_admin.auto_publish_item(db, course.id, result.id, actor_id=staff.id)
+    if publish:
+        return await course_admin.auto_publish_item(db, course.id, result.id, actor_id=staff.id)
+    return result
 
 
 @router.get("/courses/{course_id}/tree", response_model=list[LearningItemTree])
@@ -282,6 +294,13 @@ def get_changes(course_id: int, db: Session = Depends(get_db), staff: User = Dep
     if staff.role == "methodist":
         course_admin.ensure_course_owner(course_admin.get_course_or_404(db, course_id), staff)
     return get_course_changes(db, course_id)
+
+
+@router.get("/courses/{course_id}/draft-status", response_model=CourseDraftStatusOut)
+def get_draft_status(course_id: int, db: Session = Depends(get_db), staff: User = Depends(resolve_staff_user)):
+    if staff.role == "methodist":
+        course_admin.ensure_course_owner(course_admin.get_course_or_404(db, course_id), staff)
+    return course_admin.get_draft_status(db, course_id)
 
 
 @router.get("/courses/{course_id}/validation", response_model=CourseValidationOut)

@@ -113,6 +113,13 @@ class CourseOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class CourseDraftStatusOut(BaseModel):
+    course_id: int
+    active_version_number: Optional[int] = None
+    draft_version_number: Optional[int] = None
+    has_unpublished_changes: bool
+
+
 class SnapStep(BaseModel):
     """Один этап Snap!-задания — панель Snap! в нём не участвует, она одна
     и статична на весь элемент, листаются только текст слева."""
