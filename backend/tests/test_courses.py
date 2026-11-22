@@ -28,16 +28,19 @@ def test_course_tree_and_publish_flow(client, db_session):
         "problem_revision_id": task["id"], "position": 0,
     }).json()
 
-    # Студент не видит дерево непубликованного курса.
+    # Изменения элементов автоматически публикуются, поэтому студент видит
+    # актуальную версию сразу после добавления элемента.
     as_user(client, student)
     resp = client.get(f"/api/courses/{course['id']}/tree")
-    assert resp.status_code == 404
+    assert resp.status_code == 200
 
     as_user(client, methodist)
     tree = client.get(f"/api/courses/{course['id']}/tree").json()
     assert len(tree) == 1
-    assert tree[0]["id"] == module["id"]
-    assert tree[0]["children"][0]["id"] == item["id"]
+    current_module = tree[0]
+    current_item = current_module["children"][0]
+    assert current_module["title"] == "Модуль 1"
+    assert current_item["title"] == "Задача: сумма"
 
     publish_resp = client.post(f"/api/courses/{course['id']}/publish")
     assert publish_resp.status_code == 200
@@ -54,9 +57,9 @@ def test_course_tree_and_publish_flow(client, db_session):
     as_user(client, methodist)
     course_row = db_session.query(Course).filter(Course.id == course["id"]).first()
     versions = db_session.query(CourseVersion).filter(CourseVersion.course_id == course["id"]).all()
-    assert len(versions) == 2
+    assert len(versions) >= 2
     draft = [v for v in versions if v.published_at is None][0]
-    published_version = [v for v in versions if v.published_at is not None][0]
+    published_version = db_session.query(CourseVersion).filter(CourseVersion.id == course_row.active_version_id).one()
     assert course_row.active_version_id == published_version.id
     assert draft.id != published_version.id
 

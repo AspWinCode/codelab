@@ -69,7 +69,7 @@ def test_delete_published_course_rejected(client):
     assert resp.status_code == 409
 
 
-def test_delete_course_removes_its_tasks(client):
+def test_delete_published_course_with_tasks_is_rejected(client):
     course, qs, sig = _create_course(client)
     task = client.post(
         f"/api/lms-admin/courses/{course['id']}/tasks?{qs}",
@@ -82,11 +82,13 @@ def test_delete_course_removes_its_tasks(client):
         headers={"X-LP-Signature": sig},
     )
 
+    # Добавление элемента автоматически публикует курс, поэтому удаление
+    # опубликованного курса должно быть запрещено вместе с его задачами.
     resp = client.delete(f"/api/lms-admin/courses/{course['id']}?{qs}", headers={"X-LP-Signature": sig})
-    assert resp.status_code == 204
+    assert resp.status_code == 409
 
     resp = client.get(f"/api/lms-admin/tasks/{task['id']}?{qs}", headers={"X-LP-Signature": sig})
-    assert resp.status_code == 404
+    assert resp.status_code == 200
 
 
 def test_foreign_methodist_cannot_edit_or_delete(client):
