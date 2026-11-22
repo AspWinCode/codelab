@@ -89,6 +89,8 @@ export interface OgeAttempt {
   created_at: string;
   file_original_filename: string | null;
   file_size: number | null;
+  correct_answer?: string | null;
+  explanation?: string | null;
 }
 
 export interface LearningItem {
@@ -105,7 +107,11 @@ export interface LearningItem {
   problem_revision_id: number | null;
   steps: SnapStep[] | null;
   quiz_questions: QuizQuestion[] | null;
-  oge_answer?: { answer: string } | null;
+  oge_answer?: { answer: string; explanation?: string | null } | null;
+  oge_max_attempts?: number | null;
+  oge_allow_retry_after_success?: boolean;
+  oge_show_result_immediately?: boolean;
+  oge_show_correct_answer?: boolean;
   due_at: string | null;
   // Для type="project": если "turtle" — справа показывается iframe
   // редактора черепашки вместо формы ручной загрузки файла.

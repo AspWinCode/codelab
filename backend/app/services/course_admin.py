@@ -560,6 +560,13 @@ def submit_oge_attempt(
     db.add(attempt)
     db.commit()
     db.refresh(attempt)
+    # Эти поля не хранятся в OgeAttempt: они зависят от настроек конкретного
+    # задания и попадают только в ответ текущей отправки.
+    if item.oge_show_correct_answer:
+        attempt.correct_answer = _oge_answer_text(item.oge_answer)
+    if item.oge_show_result_immediately:
+        explanation = (item.oge_answer or {}).get("explanation") if isinstance(item.oge_answer, dict) else None
+        attempt.explanation = explanation or None
     recompute_progress_for_oge_attempt(db, attempt)
     return attempt
 
@@ -581,6 +588,8 @@ def _oge_answer_text(oge_answer) -> str:
         return ""
     if isinstance(oge_answer, str):
         return oge_answer
+    if isinstance(oge_answer, dict):
+        return str(oge_answer.get("answer", ""))
     return oge_answer.answer
 
 

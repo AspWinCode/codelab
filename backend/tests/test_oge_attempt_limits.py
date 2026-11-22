@@ -9,6 +9,7 @@ from app.services.course_admin import create_item, submit_oge_attempt
 
 
 def _setup(db, **item_overrides):
+    student_ref = item_overrides.pop("student_ref", "s1")
     course = Course(title="C")
     db.add(course)
     db.flush()
@@ -16,12 +17,9 @@ def _setup(db, **item_overrides):
     db.add(version)
     db.commit()
 
-    item = create_item(
-        db,
-        course.id,
-        LearningItemCreate(type="oge_task", title="Задание", oge_answer="12", **item_overrides),
-    )
-    student = User(external_ref="s1", full_name="Студент", role="student")
+    payload = {"type": "oge_task", "title": "Задание", "oge_answer": "12", **item_overrides}
+    item = create_item(db, course.id, LearningItemCreate(**payload))
+    student = User(external_ref=student_ref, full_name="Студент", role="student")
     db.add(student)
     db.commit()
     return item, student
@@ -93,3 +91,27 @@ def test_create_item_accepts_new_flexible_checker_format(db_session):
 
     assert submit_oge_attempt(db_session, item.id, student.id, "2,0").score == 100.0
     assert submit_oge_attempt(db_session, item.id, student.id, "2.5").score == 100.0
+
+
+def test_submit_returns_explanation_and_correct_answer_only_when_enabled(db_session):
+    answer = OgeAnswerIn(checker="number", answer="12", explanation="Сложите значения в таблице.")
+    item, student = _setup(
+        db_session,
+        oge_answer=answer,
+        oge_show_correct_answer=True,
+        oge_show_result_immediately=True,
+    )
+    attempt = submit_oge_attempt(db_session, item.id, student.id, "10")
+    assert attempt.correct_answer == "12"
+    assert attempt.explanation == "Сложите значения в таблице."
+
+    hidden_item, hidden_student = _setup(
+        db_session,
+        oge_answer=answer,
+        oge_show_correct_answer=False,
+        oge_show_result_immediately=False,
+        student_ref="s-hidden",
+    )
+    hidden_attempt = submit_oge_attempt(db_session, hidden_item.id, hidden_student.id, "10")
+    assert getattr(hidden_attempt, "correct_answer", None) is None
+    assert getattr(hidden_attempt, "explanation", None) is None

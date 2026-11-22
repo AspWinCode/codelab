@@ -187,6 +187,7 @@ class OgeAnswerIn(BaseModel):
     case_sensitive: bool = False
     ignore_spaces: bool = True
     tolerance: Optional[float] = None
+    explanation: Optional[str] = None
 
     @field_validator("checker")
     @classmethod
@@ -204,6 +205,10 @@ class OgeAttemptOut(BaseModel):
     created_at: datetime
     file_original_filename: Optional[str] = None
     file_size: Optional[int] = None
+    # Заполняются только для ответа сразу после отправки и только если
+    # методист разрешил их показывать в настройках задания.
+    correct_answer: Optional[str] = None
+    explanation: Optional[str] = None
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -288,6 +293,10 @@ class LearningItemOut(BaseModel):
     # (LearningItemTree) что для методиста, что для ученика.
     quiz_questions: Optional[List[QuizQuestion]] = None
     oge_answer: Optional[dict] = None
+    oge_max_attempts: Optional[int] = None
+    oge_allow_retry_after_success: bool = True
+    oge_show_result_immediately: bool = True
+    oge_show_correct_answer: bool = False
     due_at: Optional[datetime] = None
     embed_editor: Optional[str] = None
 

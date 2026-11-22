@@ -581,7 +581,7 @@ function QuizView({ item, onSubmitted, courseId, preview }: {
 }) {
   const questions = item.quiz_questions || [];
   const [selected, setSelected] = useState<Set<number>[]>(() => questions.map(() => new Set()));
-  const [result, setResult] = useState<{ score: number } | null>(null);
+  const [result, setResult] = useState<{ score: number; correct_answer?: string | null; explanation?: string | null } | null>(null);
   const [lastAttempt, setLastAttempt] = useState<QuizAttempt | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
@@ -680,7 +680,7 @@ function OgeTaskView({ item, onSubmitted, courseId, preview, meId, navIndex, nav
   // каждую публикацию, хранить их локально смысла нет.
   const [answer, setAnswer] = useState(() => (preview ? '' : readLocalOgeAnswer(meId, item.id)));
   const [file, setFile] = useState<File | null>(null);
-  const [result, setResult] = useState<{ score: number } | null>(null);
+  const [result, setResult] = useState<{ score: number; correct_answer?: string | null; explanation?: string | null } | null>(null);
   const [lastAttempt, setLastAttempt] = useState<OgeAttempt | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
@@ -764,12 +764,19 @@ function OgeTaskView({ item, onSubmitted, courseId, preview, meId, navIndex, nav
           </Typography>
         )}
         {error && <Alert severity="error" sx={{ mt: 2 }}>{error}</Alert>}
-        {result && (
+        {result && item.oge_show_result_immediately !== false && (
           <Alert severity={result.score === 100 ? 'success' : 'error'} sx={{ mt: 2 }}>
             {result.score === 100
               ? (hasNext ? 'Ответ верный. Переходим к следующему заданию…' : 'Ответ верный')
               : 'Ответ неверный. Попробуйте ещё раз.'}
+            {result.score !== 100 && item.oge_show_correct_answer && result.correct_answer && (
+              <Typography component="div" variant="body2" sx={{ mt: 0.5 }}>Правильный ответ: {result.correct_answer}</Typography>
+            )}
+            {result.explanation && <Typography component="div" variant="body2" sx={{ mt: 0.5 }}>{result.explanation}</Typography>}
           </Alert>
+        )}
+        {result && item.oge_show_result_immediately === false && (
+          <Alert severity="info" sx={{ mt: 2 }}>Ответ отправлен. Результат будет доступен после завершения проверки.</Alert>
         )}
         {!result && lastAttempt && <Typography variant="body2" color="text.secondary" sx={{ mt: 2 }}>Последняя попытка: {lastAttempt.score === 100 ? 'верно' : 'неверно'}</Typography>}
         {!result && lastAttempt?.file_original_filename && (
