@@ -682,6 +682,7 @@ function OgeTaskView({ item, onSubmitted, courseId, preview, meId, navIndex, nav
   const [file, setFile] = useState<File | null>(null);
   const [result, setResult] = useState<{ score: number; correct_answer?: string | null; explanation?: string | null } | null>(null);
   const [lastAttempt, setLastAttempt] = useState<OgeAttempt | null>(null);
+  const [attempts, setAttempts] = useState<OgeAttempt[]>([]);
   const [attemptsUsed, setAttemptsUsed] = useState(0);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
@@ -693,6 +694,7 @@ function OgeTaskView({ item, onSubmitted, courseId, preview, meId, navIndex, nav
     if (preview) return;
     api.myOgeAttempts(item.id).then((items) => {
       setAttemptsUsed(items.length);
+      setAttempts(items);
       setLastAttempt(items[0] || null);
     }).catch(() => {});
   }, [item.id, preview]);
@@ -722,6 +724,7 @@ function OgeTaskView({ item, onSubmitted, courseId, preview, meId, navIndex, nav
         const attempt = await api.submitOgeAttempt(item.id, answer, file);
         setResult(attempt);
         setLastAttempt(attempt);
+        setAttempts((items) => [attempt, ...items]);
         setAttemptsUsed((count) => count + 1);
         setFile(null);
         onSubmitted();
@@ -804,6 +807,18 @@ function OgeTaskView({ item, onSubmitted, courseId, preview, meId, navIndex, nav
             <a href={api.ogeAttemptFileUrl(lastAttempt.id)} target="_blank" rel="noreferrer">{lastAttempt.file_original_filename}</a>
           </Typography>
         )}
+        {!preview && attempts.length > 1 && (
+          <Box sx={{ mt: 1.5 }}>
+            <Typography variant="body2" color="text.secondary">История попыток</Typography>
+            <Stack spacing={0.25} sx={{ mt: 0.5 }}>
+              {attempts.map((attempt, index) => (
+                <Typography key={attempt.id} variant="caption" color="text.secondary">
+                  Попытка {attempts.length - index}: {attempt.score === 100 ? 'верно' : 'неверно'} · {new Date(attempt.created_at).toLocaleString('ru-RU')}
+                </Typography>
+              ))}
+            </Stack>
+          </Box>
+        )}
         <Paper className="oge-answer-panel" elevation={0}>
           <Typography sx={{ mr: 1 }}>Ответ:</Typography>
           <TextField
@@ -819,7 +834,7 @@ function OgeTaskView({ item, onSubmitted, courseId, preview, meId, navIndex, nav
         {!preview && (
           <>
             <Stack direction="row" spacing={1} alignItems="center" sx={{ mt: 1.5 }}>
-              <Button component="label" size="small" variant="outlined" startIcon={<AttachFile fontSize="small" />} disabled={submitting}>
+              <Button component="label" size="small" variant="outlined" startIcon={<AttachFile fontSize="small" />} disabled={submitting || submissionLocked}>
                 {file ? 'Заменить файл' : 'Прикрепить файл'}
                 <input type="file" hidden onChange={(e) => setFile(e.target.files?.[0] || null)} />
               </Button>
