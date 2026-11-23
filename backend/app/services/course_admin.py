@@ -841,46 +841,7 @@ async def publish_course(db: Session, course_id: int, actor_id: int | None) -> C
     db.add(new_version)
     db.flush()
 
-    old_items = (
-        db.query(LearningItem)
-        .filter(LearningItem.course_version_id == draft.id)
-        .order_by(LearningItem.id)
-        .all()
-    )
-    id_map: dict[int, int] = {}
-    for old in old_items:
-        clone = LearningItem(
-            course_version_id=new_version.id,
-            parent_id=None,  # проставим вторым проходом по id_map
-            type=old.type,
-            title=old.title,
-            description=old.description,
-            content=old.content,
-            is_required=old.is_required,
-            weight=old.weight,
-            position=old.position,
-            unlock_rules=old.unlock_rules,
-            problem_revision_id=old.problem_revision_id,
-            is_archived=old.is_archived,
-            steps=old.steps,
-            quiz_questions=old.quiz_questions,
-            oge_answer=old.oge_answer,
-            oge_max_attempts=old.oge_max_attempts,
-            oge_allow_retry_after_success=old.oge_allow_retry_after_success,
-            oge_show_result_immediately=old.oge_show_result_immediately,
-            oge_show_correct_answer=old.oge_show_correct_answer,
-            due_at=old.due_at,
-            embed_editor=old.embed_editor,
-            source_item_id=old.id,
-        )
-        db.add(clone)
-        db.flush()
-        id_map[old.id] = clone.id
-    for old in old_items:
-        if old.parent_id:
-            db.query(LearningItem).filter(LearningItem.id == id_map[old.id]).update(
-                {"parent_id": id_map[old.parent_id]}
-            )
+    _clone_items_to_version(db, draft.id, new_version.id)
 
     db.add(AuditEvent(actor_id=actor_id, action="course_publish", object_type="course", object_id=course.id, meta={"version_id": draft.id}))
     db.commit()
@@ -888,6 +849,53 @@ async def publish_course(db: Session, course_id: int, actor_id: int | None) -> C
 
     await notify_course_webhook(course, "published")
     return course
+
+
+def _clone_items_to_version(db: Session, source_version_id: int, target_version_id: int) -> int:
+    """Клонирует дерево без изменения исходной версии."""
+    old_items = db.query(LearningItem).filter(
+        LearningItem.course_version_id == source_version_id
+    ).order_by(LearningItem.id).all()
+    id_map: dict[int, int] = {}
+    for old in old_items:
+        clone = LearningItem(
+            course_version_id=target_version_id, parent_id=None,
+            type=old.type, title=old.title, description=old.description, content=old.content,
+            is_required=old.is_required, weight=old.weight, position=old.position,
+            unlock_rules=old.unlock_rules, problem_revision_id=old.problem_revision_id,
+            is_archived=old.is_archived, steps=old.steps, quiz_questions=old.quiz_questions,
+            oge_answer=old.oge_answer, oge_max_attempts=old.oge_max_attempts,
+            oge_allow_retry_after_success=old.oge_allow_retry_after_success,
+            oge_show_result_immediately=old.oge_show_result_immediately,
+            oge_show_correct_answer=old.oge_show_correct_answer, due_at=old.due_at,
+            embed_editor=old.embed_editor, source_item_id=old.id,
+        )
+        db.add(clone)
+        db.flush()
+        id_map[old.id] = clone.id
+    for old in old_items:
+        if old.parent_id in id_map:
+            db.query(LearningItem).filter(LearningItem.id == id_map[old.id]).update(
+                {"parent_id": id_map[old.parent_id]}
+            )
+    return len(old_items)
+
+
+def restore_draft_from_active(db: Session, course_id: int, actor_id: int | None) -> CourseVersion:
+    """Восстанавливает только пустой черновик из активной версии."""
+    course = get_course_or_404(db, course_id)
+    draft = get_draft_version(db, course_id)
+    active = db.query(CourseVersion).filter(CourseVersion.id == course.active_version_id).first() if course.active_version_id else None
+    if not active:
+        raise HTTPException(status_code=409, detail="У курса нет опубликованной версии")
+    if db.query(LearningItem).filter(LearningItem.course_version_id == draft.id).count():
+        raise HTTPException(status_code=409, detail="Черновик уже содержит элементы")
+    cloned = _clone_items_to_version(db, active.id, draft.id)
+    db.add(AuditEvent(actor_id=actor_id, action="course_restore_draft", object_type="course", object_id=course.id,
+                      meta={"source_version_id": active.id, "draft_version_id": draft.id, "items": cloned}))
+    db.commit()
+    db.refresh(draft)
+    return draft
 
 
 async def auto_publish_item(db: Session, course_id: int, item_id: int, actor_id: int | None) -> LearningItem:

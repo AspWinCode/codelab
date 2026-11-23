@@ -314,6 +314,13 @@ def get_course_validation(course_id: int, db: Session = Depends(get_db), staff: 
     return CourseValidationOut(valid=not errors, errors=errors, warnings=[])
 
 
+@router.post("/courses/{course_id}/restore-draft", response_model=CourseDraftStatusOut)
+def restore_draft(course_id: int, db: Session = Depends(get_db), staff: User = Depends(resolve_staff_user)):
+    course_admin.ensure_course_owner(course_admin.get_course_or_404(db, course_id), staff)
+    course_admin.restore_draft_from_active(db, course_id, actor_id=staff.id)
+    return course_admin.get_draft_status(db, course_id)
+
+
 @router.post("/courses/{course_id}/publish", response_model=CourseOut)
 async def publish_course(course_id: int, db: Session = Depends(get_db), staff: User = Depends(resolve_staff_user)):
     course_admin.ensure_course_owner(course_admin.get_course_or_404(db, course_id), staff)
