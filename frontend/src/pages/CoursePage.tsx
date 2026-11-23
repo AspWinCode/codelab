@@ -682,6 +682,7 @@ function OgeTaskView({ item, onSubmitted, courseId, preview, meId, navIndex, nav
   const [file, setFile] = useState<File | null>(null);
   const [result, setResult] = useState<{ score: number; correct_answer?: string | null; explanation?: string | null } | null>(null);
   const [lastAttempt, setLastAttempt] = useState<OgeAttempt | null>(null);
+  const [attemptsUsed, setAttemptsUsed] = useState(0);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
   const autoAdvanceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -690,7 +691,10 @@ function OgeTaskView({ item, onSubmitted, courseId, preview, meId, navIndex, nav
     // Этап 5 (ТЗ): в предпросмотре попытки не сохраняются — у черновика их
     // попросту не может быть (см. api.previewCheckOge).
     if (preview) return;
-    api.myOgeAttempts(item.id).then((items) => setLastAttempt(items[0] || null)).catch(() => {});
+    api.myOgeAttempts(item.id).then((items) => {
+      setAttemptsUsed(items.length);
+      setLastAttempt(items[0] || null);
+    }).catch(() => {});
   }, [item.id, preview]);
 
   useEffect(() => () => {
@@ -702,8 +706,12 @@ function OgeTaskView({ item, onSubmitted, courseId, preview, meId, navIndex, nav
     if (!preview) writeLocalOgeAnswer(meId, item.id, value);
   };
 
+  const attemptsLimitReached = !preview && item.oge_max_attempts != null && attemptsUsed >= item.oge_max_attempts;
+  const solvedAndLocked = !preview && lastAttempt?.score === 100 && item.oge_allow_retry_after_success === false;
+  const submissionLocked = attemptsLimitReached || solvedAndLocked;
+
   const submit = async () => {
-    if (!answer.trim() || submitting) return;
+    if (!answer.trim() || submitting || submissionLocked) return;
     setSubmitting(true);
     setError('');
     try {
@@ -714,6 +722,7 @@ function OgeTaskView({ item, onSubmitted, courseId, preview, meId, navIndex, nav
         const attempt = await api.submitOgeAttempt(item.id, answer, file);
         setResult(attempt);
         setLastAttempt(attempt);
+        setAttemptsUsed((count) => count + 1);
         setFile(null);
         onSubmitted();
         if (attempt.score === 100) {
@@ -778,6 +787,16 @@ function OgeTaskView({ item, onSubmitted, courseId, preview, meId, navIndex, nav
         {result && item.oge_show_result_immediately === false && (
           <Alert severity="info" sx={{ mt: 2 }}>Ответ отправлен. Результат будет доступен после завершения проверки.</Alert>
         )}
+        {!preview && item.oge_max_attempts != null && (
+          <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 1 }}>
+            Использовано попыток: {attemptsUsed} из {item.oge_max_attempts}
+          </Typography>
+        )}
+        {submissionLocked && !result && (
+          <Alert severity="info" sx={{ mt: 2 }}>
+            {solvedAndLocked ? 'Задание уже решено. Повторная попытка недоступна.' : 'Доступные попытки закончились.'}
+          </Alert>
+        )}
         {!result && lastAttempt && <Typography variant="body2" color="text.secondary" sx={{ mt: 2 }}>Последняя попытка: {lastAttempt.score === 100 ? 'верно' : 'неверно'}</Typography>}
         {!result && lastAttempt?.file_original_filename && (
           <Typography variant="body2" sx={{ mt: 0.5 }}>
@@ -790,10 +809,10 @@ function OgeTaskView({ item, onSubmitted, courseId, preview, meId, navIndex, nav
           <TextField
             size="small" value={answer} onChange={(e) => changeAnswer(e.target.value)}
             onKeyDown={(e) => { if (e.key === 'Enter') submit(); }}
-            disabled={submitting}
+            disabled={submitting || submissionLocked}
             inputProps={{ inputMode: 'decimal', 'aria-label': 'Ответ' }}
           />
-          <Button variant="contained" onClick={submit} disabled={submitting || !answer.trim()} sx={{ ml: 1 }}>
+          <Button variant="contained" onClick={submit} disabled={submitting || submissionLocked || !answer.trim()} sx={{ ml: 1 }}>
             {submitting ? 'Проверяем…' : 'Проверить'}
           </Button>
         </Paper>
