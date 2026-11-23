@@ -16,7 +16,6 @@
 }
 
 .oge-task-card {
-  background: #eef3f5;
   border-radius: 6px;
   padding: 26px 18px 18px;
 }
@@ -30,9 +29,7 @@
   align-items: center;
   margin-top: 18px;
   padding: 12px 14px;
-  border: 1px solid #dce3e7;
   border-radius: 9px;
-  background: #fff;
 }
 
 .preview pre {

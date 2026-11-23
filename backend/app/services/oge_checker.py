@@ -97,9 +97,10 @@ def check_oge_answer(oge_answer: dict, submitted: str) -> bool:
     """True, если submitted принимается как правильный ответ для oge_answer."""
     checker = oge_answer.get("checker")
     if checker is None:
-        # Старый формат (до ТЗ п.16.9) — сравнение как было изначально.
-        expected = str(oge_answer.get("answer", "")).strip().replace(",", ".")
-        actual = str(submitted).strip().replace(",", ".")
+        # Старый формат тоже должен принимать ответ независимо от регистра:
+        # часть опубликованных заданий ещё не содержит поля checker.
+        expected = str(oge_answer.get("answer", "")).strip().replace(",", ".").casefold()
+        actual = str(submitted).strip().replace(",", ".").casefold()
         return actual == expected
 
     candidates = _candidates(oge_answer)

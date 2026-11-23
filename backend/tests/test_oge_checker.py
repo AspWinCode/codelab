@@ -3,12 +3,14 @@ decimal/boolean + обратная совместимость со старым 
 from app.services.oge_checker import check_oge_answer
 
 
-def test_legacy_format_without_checker_compares_like_before():
+def test_legacy_format_without_checker_is_case_insensitive():
     oge_answer = {"answer": "12"}
     assert check_oge_answer(oge_answer, "12")
     assert check_oge_answer(oge_answer, "12,0") is False  # старое поведение: только strip + "," -> "."
     assert check_oge_answer(oge_answer, " 12 ")
     assert check_oge_answer(oge_answer, "13") is False
+
+    assert check_oge_answer({"answer": "Москва"}, "москва")
 
 
 def test_number_checker_treats_dot_and_comma_as_equal():

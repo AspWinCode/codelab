@@ -749,9 +749,9 @@ function OgeTaskView({ item, onSubmitted, courseId, preview, meId, navIndex, nav
 
   return (
     <Container maxWidth="md" sx={{ py: 4 }}>
-      <Box className="oge-task-card">
+      <Box className="oge-task-card" sx={{ bgcolor: 'background.paper', borderColor: 'divider', color: 'text.primary' }}>
         <Stack direction={{ xs: 'column', sm: 'row' }} justifyContent="space-between" alignItems={{ sm: 'center' }} spacing={0.5} sx={{ mb: 1 }}>
-          <Typography variant="h2">Задача №{item.position + 1}</Typography>
+          <Typography variant="h2">Задача №{navIndex + 1}</Typography>
           {navTotal > 0 && (
             <Typography variant="body2" color="text.secondary">Задание {navIndex + 1} из {navTotal}</Typography>
           )}
@@ -768,6 +768,12 @@ function OgeTaskView({ item, onSubmitted, courseId, preview, meId, navIndex, nav
         {statementIsHtml ? (
           <Box
             className="preview oge-task-statement"
+            sx={{
+              color: 'text.primary',
+              '& table': { color: 'inherit', borderColor: 'divider' },
+              '& th, & td': { color: 'inherit !important', borderColor: 'divider' },
+              '& [style*="color"]': { color: 'inherit !important' },
+            }}
             dangerouslySetInnerHTML={{ __html: renderContentHtml(statement) }}
           />
         ) : (
@@ -819,7 +825,7 @@ function OgeTaskView({ item, onSubmitted, courseId, preview, meId, navIndex, nav
             </Stack>
           </Box>
         )}
-        <Paper className="oge-answer-panel" elevation={0}>
+        <Paper className="oge-answer-panel" elevation={0} sx={{ bgcolor: 'background.paper', borderColor: 'divider', color: 'text.primary' }}>
           <Typography sx={{ mr: 1 }}>Ответ:</Typography>
           <TextField
             size="small" value={answer} onChange={(e) => changeAnswer(e.target.value)}
@@ -1069,6 +1075,7 @@ export default function CoursePage({ preview = false }: { preview?: boolean }) {
   const [completingItem, setCompletingItem] = useState(false);
   const [saveStatus, setSaveStatus] = useState<SaveStatus>('idle');
   const pollTimer = useRef<ReturnType<typeof setInterval> | null>(null);
+  const treeRequestSeq = useRef(0);
 
   // IDE-002: id пользователя — только для ключа локальной резервной копии
   // черновика (utils/draftStorage.ts), чтобы она не путалась между учениками
@@ -1146,7 +1153,9 @@ export default function CoursePage({ preview = false }: { preview?: boolean }) {
   }, []);
 
   useEffect(() => {
+    const requestSeq = ++treeRequestSeq.current;
     (preview ? api.getPreviewTree(Number(courseId)) : api.getTree(Number(courseId))).then((t) => {
+      if (requestSeq !== treeRequestSeq.current) return;
       setTree(t);
       const wantedId = Number(searchParams.get('item'));
       const flat = flatten(t);
@@ -1196,8 +1205,11 @@ export default function CoursePage({ preview = false }: { preview?: boolean }) {
     // предпросмотре рендерится отдельным, самодостаточным TaskPreviewView
     // (ниже) — не трогает draft/submissions/история этого компонента.
     if (preview) return;
+    const requestSeq = ++treeRequestSeq.current;
     api.setLastPosition(Number(courseId), item.id)
-      .then(() => api.getTree(Number(courseId)).then(setTree))
+      .then(() => api.getTree(Number(courseId)).then((nextTree) => {
+        if (requestSeq === treeRequestSeq.current) setTree(nextTree);
+      }))
       .catch(() => {});
     if (item.type === 'task' && item.problem_revision_id) {
       const problemRevisionId = item.problem_revision_id;
@@ -1237,7 +1249,9 @@ export default function CoursePage({ preview = false }: { preview?: boolean }) {
 
   const refreshTreeAndSelected = () => {
     if (preview) return;
+    const requestSeq = ++treeRequestSeq.current;
     api.getTree(Number(courseId)).then((t) => {
+      if (requestSeq !== treeRequestSeq.current) return;
       setTree(t);
       if (selected) {
         const refreshed = flatten(t).find((i) => i.id === selected.id);
