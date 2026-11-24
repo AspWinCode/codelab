@@ -2,7 +2,7 @@
 from app.models import Course, CourseVersion, LearningItem, LearningItemType, ProblemRevision
 from app.schemas import LearningItemCreate, QuizQuestion, SnapStep
 from app.services.course_admin import create_item, set_item_archived
-from app.services.course_validator import validate_course_before_publish
+from app.services.course_validator import normalize_draft_positions, validate_course_before_publish
 from tests.conftest import as_user, make_user
 
 
@@ -109,6 +109,20 @@ def test_duplicate_position_among_siblings_is_reported(db_session):
     errors = validate_course_before_publish(db_session, course.id)
     assert "DUPLICATE_POSITION" in _codes(errors)
     assert sum(1 for e in errors if e.code == "DUPLICATE_POSITION") == 2
+
+
+def test_normalize_draft_positions_repairs_duplicate_sibling_positions(db_session):
+    course = _make_course(db_session)
+    first = create_item(db_session, course.id, LearningItemCreate(type="module", title="M1", position=22))
+    second = create_item(db_session, course.id, LearningItemCreate(type="module", title="M2", position=22))
+
+    changed = normalize_draft_positions(db_session, course.id)
+    db_session.refresh(first)
+    db_session.refresh(second)
+
+    assert changed == 2
+    assert [first.position, second.position] == [0, 1]
+    assert "DUPLICATE_POSITION" not in _codes(validate_course_before_publish(db_session, course.id))
 
 
 def test_unlock_rule_pointing_to_missing_item_is_reported(db_session):

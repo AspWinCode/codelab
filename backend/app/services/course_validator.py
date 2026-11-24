@@ -100,3 +100,28 @@ def validate_course_before_publish(db: Session, course_id: int) -> list[Validati
             errors.append(ValidationError(item.id, "UNLOCK_RULE_INVALID", f"«{item.title}»: unlock_rules ссылается на несуществующий элемент {after_item_id}"))
 
     return errors
+
+
+def normalize_draft_positions(db: Session, course_id: int) -> int:
+    """Repair duplicate sibling positions in the current draft only."""
+    get_course_or_404(db, course_id)
+    version = get_draft_version(db, course_id)
+    items = (
+        db.query(LearningItem)
+        .filter(LearningItem.course_version_id == version.id)
+        .order_by(LearningItem.parent_id, LearningItem.position, LearningItem.id)
+        .all()
+    )
+    sibling_groups: dict[Optional[int], list[LearningItem]] = {}
+    for item in items:
+        sibling_groups.setdefault(item.parent_id, []).append(item)
+
+    changed = 0
+    for siblings in sibling_groups.values():
+        for new_position, item in enumerate(siblings):
+            if item.position != new_position:
+                item.position = new_position
+                changed += 1
+    if changed:
+        db.commit()
+    return changed

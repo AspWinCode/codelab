@@ -58,7 +58,7 @@ from app.schemas import (
 from app.security import verify_lms_signature
 from app.services import admin_status, analytics, bulk_edit, course_admin, project_admin
 from app.services.course_changes import get_course_changes
-from app.services.course_validator import validate_course_before_publish
+from app.services.course_validator import normalize_draft_positions, validate_course_before_publish
 from app.services.task_import import import_tasks, mark_duplicates, parse_import_file
 from app.services.environments import list_environments
 from app.services.progress_calc import apply_manual_grade
@@ -310,6 +310,7 @@ def get_course_validation(course_id: int, db: Session = Depends(get_db), staff: 
     же списком в publish_course ниже)."""
     if staff.role == "methodist":
         course_admin.ensure_course_owner(course_admin.get_course_or_404(db, course_id), staff)
+    normalize_draft_positions(db, course_id)
     errors = validate_course_before_publish(db, course_id)
     return CourseValidationOut(valid=not errors, errors=errors, warnings=[])
 
@@ -324,6 +325,7 @@ def restore_draft(course_id: int, db: Session = Depends(get_db), staff: User = D
 @router.post("/courses/{course_id}/publish", response_model=CourseOut)
 async def publish_course(course_id: int, db: Session = Depends(get_db), staff: User = Depends(resolve_staff_user)):
     course_admin.ensure_course_owner(course_admin.get_course_or_404(db, course_id), staff)
+    normalize_draft_positions(db, course_id)
     errors = validate_course_before_publish(db, course_id)
     if errors:
         raise HTTPException(

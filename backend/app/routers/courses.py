@@ -37,7 +37,7 @@ from app.schemas import (
     RerunSubmissionsOut,
 )
 from app.services import course_admin
-from app.services.course_validator import validate_course_before_publish
+from app.services.course_validator import normalize_draft_positions, validate_course_before_publish
 from app.services.oge_files import oge_file_path, save_oge_file
 
 router = APIRouter()
@@ -349,6 +349,7 @@ def delete_course(course_id: int, db: Session = Depends(get_db), user: User = De
 @router.get("/{course_id}/validation", response_model=CourseValidationOut)
 def get_course_validation(course_id: int, db: Session = Depends(get_db), user: User = Depends(require_role("methodist", "admin"))):
     course_admin.ensure_course_owner(course_admin.get_course_or_404(db, course_id), user)
+    normalize_draft_positions(db, course_id)
     errors = validate_course_before_publish(db, course_id)
     return CourseValidationOut(valid=not errors, errors=errors, warnings=[])
 
@@ -356,6 +357,7 @@ def get_course_validation(course_id: int, db: Session = Depends(get_db), user: U
 @router.post("/{course_id}/publish", response_model=CourseOut)
 async def publish_course(course_id: int, db: Session = Depends(get_db), user: User = Depends(require_role("methodist", "admin"))):
     course_admin.ensure_course_owner(course_admin.get_course_or_404(db, course_id), user)
+    normalize_draft_positions(db, course_id)
     errors = validate_course_before_publish(db, course_id)
     if errors:
         raise HTTPException(
