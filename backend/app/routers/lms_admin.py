@@ -208,6 +208,17 @@ async def update_item(
     return result
 
 
+@router.get("/items/{item_id}", response_model=LearningItemOut)
+def get_item(item_id: int, db: Session = Depends(get_db), staff: User = Depends(resolve_staff_user)):
+    """Полное содержимое одного элемента (content/steps/quiz_questions/
+    oge_answer) — конструктор дозапрашивает это только при открытии элемента
+    на редактирование, т.к. /courses/{course_id}/tree теперь lean (см.
+    build_tree)."""
+    item, course = course_admin.get_course_for_item(db, item_id)
+    course_admin.ensure_course_owner(course, staff)
+    return item
+
+
 @router.delete("/items/{item_id}")
 async def delete_item(item_id: int, publish: bool = Query(True), db: Session = Depends(get_db), staff: User = Depends(resolve_staff_user)):
     _, course = course_admin.get_course_for_item(db, item_id)
@@ -259,7 +270,7 @@ def get_tree(course_id: int, db: Session = Depends(get_db), staff: User = Depend
         if not version:
             raise HTTPException(status_code=404, detail="Опубликованная версия курса не найдена")
     items = db.query(LearningItem).filter(LearningItem.course_version_id == version.id).order_by(LearningItem.position).all()
-    return course_admin.build_tree(items)
+    return course_admin.build_tree(items, lean=True)
 
 
 @router.put("/courses/{course_id}", response_model=CourseOut)

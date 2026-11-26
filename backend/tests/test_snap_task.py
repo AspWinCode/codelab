@@ -93,4 +93,7 @@ def test_snap_task_appears_in_tree(client):
     tree = client.get(f"/api/lms-admin/courses/{course['id']}/tree?{qs}", headers={"X-LP-Signature": sig}).json()
     assert len(tree) == 1
     assert tree[0]["type"] == "snap_task"
-    assert tree[0]["steps"][0]["title"] == "Шаг 1"
+    # /tree теперь lean (без тяжёлых полей) — полный steps только через /items/{id}.
+    assert tree[0]["steps"] is None
+    item = client.get(f"/api/lms-admin/items/{tree[0]['id']}?{qs}", headers={"X-LP-Signature": sig}).json()
+    assert item["steps"][0]["title"] == "Шаг 1"

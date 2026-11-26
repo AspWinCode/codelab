@@ -180,23 +180,35 @@ def get_draft_status(db: Session, course_id: int) -> dict:
     }
 
 
+_HEAVY_ITEM_FIELDS = ("content", "steps", "quiz_questions", "oge_answer")
+
+
 def build_tree(
     items: list[LearningItem],
     unlocked_ids: set[int] | None = None,
     completed_ids: set[int] | None = None,
+    lean: bool = False,
 ) -> list[LearningItemTree]:
+    """lean=True убирает тяжёлые поля (content/steps/quiz_questions/oge_answer)
+    из каждого узла — для одного курса ОГЭ с инлайновыми base64-картинками в
+    content дерево весило ~14МБ и таймаутило у методиста на медленном канале
+    (конструктору нужен только список заголовков; полное содержимое — только
+    при открытии конкретного элемента, см. GET /items/{item_id})."""
     # LearningItemOut (без "children") — иначе model_validate(item) читает
     # реальный ORM-relationship LearningItem.children и рекурсивно тянет его
     # из БД, задваивая узлы поверх дерева, которое мы строим вручную ниже.
-    nodes = {
-        i.id: LearningItemTree(
-            **LearningItemOut.model_validate(i).model_dump(),
+    nodes = {}
+    for i in items:
+        data = LearningItemOut.model_validate(i).model_dump()
+        if lean:
+            for field in _HEAVY_ITEM_FIELDS:
+                data[field] = None
+        nodes[i.id] = LearningItemTree(
+            **data,
             children=[],
             unlocked=True if unlocked_ids is None else i.id in unlocked_ids,
             completed=False if completed_ids is None else i.id in completed_ids,
         )
-        for i in items
-    }
     roots: list[LearningItemTree] = []
     for item in items:
         node = nodes[item.id]
