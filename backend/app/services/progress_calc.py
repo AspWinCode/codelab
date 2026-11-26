@@ -282,6 +282,7 @@ def recompute_progress_for_oge_attempt(db: Session, attempt: OgeAttempt) -> None
     ).all()
     for enrollment in enrollments:
         enrollment.last_item_id = item.id
+        _recompute_course_progress(db, enrollment)
     db.commit()
 
 
